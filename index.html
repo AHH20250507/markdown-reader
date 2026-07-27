@@ -17,6 +17,7 @@
     --code-bg: #f6f8fa; --code-fg: #1f2328; --quote-border: #d0d7de;
     --quote-fg: #656d76; --table-stripe: #f6f8fa; --shadow: 0 1px 3px rgba(27,31,36,.12);
     --toolbar-bg: rgba(255,255,255,.85); --tab-bg: #f6f8fa; --tab-active: #ffffff;
+    --scrollbar-track: transparent; --scrollbar-thumb: #c9cfd4; --scrollbar-thumb-hover: #afb5ba;
   }
   [data-theme="dark"] {
     --bg: #0d1117; --bg-soft: #161b22; --fg: #e6edf3; --muted: #8b949e;
@@ -24,6 +25,7 @@
     --code-bg: #161b22; --code-fg: #e6edf3; --quote-border: #30363d;
     --quote-fg: #8b949e; --table-stripe: #161b22; --shadow: 0 1px 3px rgba(0,0,0,.5);
     --toolbar-bg: rgba(13,17,23,.85); --tab-bg: #161b22; --tab-active: #0d1117;
+    --scrollbar-track: transparent; --scrollbar-thumb: #484f58; --scrollbar-thumb-hover: #6e7681;
   }
   [data-theme="sepia"] {
     --bg: #f7f1e3; --bg-soft: #efe6d3; --fg: #433422; --muted: #8a7a64;
@@ -31,9 +33,21 @@
     --code-bg: #efe6d3; --code-fg: #433422; --quote-border: #d9cbb0;
     --quote-fg: #8a7a64; --table-stripe: #efe6d3; --shadow: 0 1px 3px rgba(120,90,50,.18);
     --toolbar-bg: rgba(247,241,227,.85); --tab-bg: #efe6d3; --tab-active: #f7f1e3;
+    --scrollbar-track: transparent; --scrollbar-thumb: #c4b8a0; --scrollbar-thumb-hover: #b5a88c;
   }
 
   * { box-sizing: border-box; }
+
+  /* ---------- 全局滚动条（跟随主题） ---------- */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; transition: background .2s; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);
