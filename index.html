@@ -181,6 +181,8 @@
   .markdown-body input[type="checkbox"] { margin-right: 6px; }
   .markdown-body .task-list-item { list-style: none; margin-left: -1.4em; }
   .markdown-body kbd { background: var(--bg-soft); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font-size: .85em; }
+  .markdown-body[contenteditable="true"] { outline: 2px dashed var(--accent); outline-offset: -2px; cursor: text; border-radius: 12px; transition: outline-color .2s; }
+  .markdown-body[contenteditable="true"]:focus { outline-color: var(--accent); }
 
   @media (max-width: 760px) {
     .layout { flex-direction: column; }
@@ -197,6 +199,7 @@
     <button class="btn primary" id="btn-add">＋ 新增页面</button>
     <button class="btn danger" id="btn-clear">清空</button>
     <button class="btn" id="btn-toggle-editor">隐藏编辑</button>
+    <button class="btn" id="btn-edit-preview">✏️ 编辑</button>
     <button class="btn" id="btn-theme">🌗 主题</button>
     <button class="btn" id="btn-copy">复制 MD</button>
     <button class="btn" id="btn-export">导出 HTML</button>
@@ -219,7 +222,8 @@
           • 直接 <kbd>Ctrl</kbd> + <kbd>V</kbd> 粘贴 Markdown 文字<br/>
           • 点击「打开文件」或「＋ 新增页面」<br/>
           • 已有内容时再拖入文件 = 自动新增一页<br/>
-          • 顶部标签可随时切换 / 关闭多个页面
+          • 顶部标签可随时切换 / 关闭多个页面<br/>
+          • 点「✏️ 编辑」可直接在右侧显示页里修改内容
         </div>
       </div>
       <article class="markdown-body" id="preview"></article>
@@ -285,7 +289,7 @@
   function renderPreview() {
     const raw = editor.value;
     if (raw.trim() === "") {
-      preview.innerHTML = ""; welcome.classList.remove("hidden"); meta.textContent = "就绪"; return;
+      preview.innerHTML = ""; welcome.classList.toggle("hidden", editMode); meta.textContent = "就绪"; return;
     }
     welcome.classList.add("hidden");
     preview.innerHTML = DOMPurify.sanitize(marked.parse(raw));
@@ -318,13 +322,15 @@
   }
 
   function switchPage(id) {
-    const cur = activePage(); if (cur) cur.content = editor.value;
+    const cur = activePage();
+    if (cur) { cur.content = editMode ? htmlToMarkdown(preview) : editor.value; }
     activeId = id;
     editor.value = activePage().content;
     renderPreview(); renderTabs(); persist();
   }
 
   function closePage(id) {
+    if (editMode && id === activeId) { const c = activePage(); if (c) c.content = htmlToMarkdown(preview); }
     const idx = pages.findIndex(function (p) { return p.id === id; });
     if (idx < 0) return;
     pages.splice(idx, 1);
@@ -363,6 +369,8 @@
 
   // ---------- 编辑器输入（防抖） ----------
   let t;
+  let editMode = false;   // 右侧预览区是否处于「直接编辑」状态
+  let editT;
   editor.addEventListener("input", function () {
     clearTimeout(t);
     t = setTimeout(function () {
@@ -450,6 +458,140 @@
     a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
     a.download = "markdown-export.html"; a.click(); URL.revokeObjectURL(a.href);
     meta.textContent = "已导出当前页面 HTML";
+  });
+
+  // ---------- 显示页直接编辑 ----------
+  // 把渲染后的 DOM 还原为 Markdown（支持常用元素：标题/段落/粗斜体/行内代码/代码块/引用/列表/任务列表/链接/图片/分割线/表格）
+  function htmlToMarkdown(root) {
+    function inline(node) {
+      let out = "";
+      node.childNodes.forEach(function (n) {
+        if (n.nodeType === 3) { out += n.textContent; return; }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName.toLowerCase();
+        const txt = inline(n);
+        if (tag === "strong" || tag === "b") out += "**" + txt + "**";
+        else if (tag === "em" || tag === "i") out += "*" + txt + "*";
+        else if (tag === "code") out += "`" + n.textContent + "`";
+        else if (tag === "a") out += "[" + txt + "](" + (n.getAttribute("href") || "") + ")";
+        else if (tag === "img") out += "![" + (n.getAttribute("alt") || "") + "](" + (n.getAttribute("src") || "") + ")";
+        else if (tag === "br") out += "\n";
+        else out += txt;
+      });
+      return out;
+    }
+    function liBody(li, depth) {
+      let out = "";
+      li.childNodes.forEach(function (n) {
+        if (n.nodeType === 1) {
+          const t = n.tagName.toLowerCase();
+          if (t === "input") return;
+          if (t === "ul" || t === "ol") out += "\n" + block(n, depth);
+          else out += inline(n);
+        } else if (n.nodeType === 3) { out += n.textContent; }
+      });
+      return out.replace(/\n{2,}/g, "\n").trim();
+    }
+    function tableToMd(table) {
+      const rows = table.querySelectorAll("tr");
+      if (!rows.length) return "";
+      let md = "";
+      rows.forEach(function (tr, ri) {
+        const cells = tr.querySelectorAll("th, td");
+        const line = Array.prototype.map.call(cells, function (c) { return inline(c).trim().replace(/\|/g, "\\|"); }).join(" | ");
+        md += "| " + line + " |\n";
+        if (ri === 0) {
+          const sep = Array.prototype.map.call(cells, function () { return "---"; }).join(" | ");
+          md += "| " + sep + " |\n";
+        }
+      });
+      return md;
+    }
+    function block(node, depth) {
+      let md = "";
+      const pad = "  ".repeat(depth);
+      node.childNodes.forEach(function (n) {
+        if (n.nodeType === 3) {
+          const t = n.textContent.replace(/^\n+|\n+$/g, "");
+          if (t.trim() !== "") md += t + "\n\n";
+          return;
+        }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName.toLowerCase();
+        if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
+          const lvl = parseInt(tag[1], 10);
+          md += "#".repeat(lvl) + " " + inline(n).trim() + "\n\n";
+        } else if (tag === "p") {
+          md += inline(n).trim() + "\n\n";
+        } else if (tag === "blockquote") {
+          const inner = block(n, 0).replace(/\n+$/, "");
+          md += inner.split("\n").map(function (l) { return "> " + l; }).join("\n") + "\n\n";
+        } else if (tag === "pre") {
+          const code = n.querySelector("code");
+          const cls = code ? code.className : "";
+          const m = cls && cls.match(/language-([\w-]+)/);
+          const lang = m ? m[1] : "";
+          md += "```" + lang + "\n" + (code ? code.textContent : n.textContent) + "\n```\n\n";
+        } else if (tag === "hr") {
+          md += "---\n\n";
+        } else if (tag === "ul" || tag === "ol") {
+          let idx = 1;
+          n.childNodes.forEach(function (li) {
+            if (li.nodeType !== 1 || li.tagName.toLowerCase() !== "li") return;
+            const cb = li.querySelector("input[type=checkbox]");
+            const isTask = !!cb;
+            const marker = tag === "ol" ? (idx++) + "." : "-";
+            const firstPrefix = isTask ? pad + "- [" + (cb.checked ? "x" : " ") + "] " : pad + marker + " ";
+            const lines = liBody(li, depth + 1).split("\n");
+            md += firstPrefix + (lines[0] || "").trim() + "\n";
+            for (let k = 1; k < lines.length; k++) md += pad + "  " + lines[k] + "\n";
+          });
+          md += "\n";
+        } else if (tag === "table") {
+          md += tableToMd(n) + "\n\n";
+        } else if (tag === "div") {
+          md += block(n, depth);
+        } else {
+          md += inline(n).trim() + "\n\n";
+        }
+      });
+      return md;
+    }
+    return block(root, 0).replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  }
+
+  const btnEditPreview = document.getElementById("btn-edit-preview");
+  function setEditMode(on) {
+    editMode = on;
+    if (on) {
+      preview.setAttribute("contenteditable", "true");
+      welcome.classList.add("hidden");
+      btnEditPreview.textContent = "✅ 完成编辑";
+      btnEditPreview.classList.add("primary");
+      preview.focus();
+    } else {
+      preview.removeAttribute("contenteditable");
+      btnEditPreview.textContent = "✏️ 编辑";
+      btnEditPreview.classList.remove("primary");
+      const md = htmlToMarkdown(preview);
+      const p = activePage(); if (p) p.content = md;
+      editor.value = md;
+      renderPreview(); renderTabs(); persist();
+      meta.textContent = "已保存编辑内容";
+    }
+  }
+  btnEditPreview.addEventListener("click", function () { setEditMode(!editMode); });
+
+  preview.addEventListener("input", function () {
+    if (!editMode) return;
+    clearTimeout(editT);
+    editT = setTimeout(function () {
+      const md = htmlToMarkdown(preview);
+      const p = activePage(); if (p) p.content = md;
+      editor.value = md;
+      renderTabs(); persist();
+      meta.textContent = "编辑中 · " + md.replace(/\s/g, "").length + " 字符";
+    }, 400);
   });
 
   // ---------- 启动 ----------
