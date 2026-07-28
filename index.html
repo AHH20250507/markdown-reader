@@ -183,6 +183,8 @@
   .markdown-body kbd { background: var(--bg-soft); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font-size: .85em; }
   .markdown-body[contenteditable="true"] { outline: 2px dashed var(--accent); outline-offset: -2px; cursor: text; border-radius: 12px; transition: outline-color .2s; }
   .markdown-body[contenteditable="true"]:focus { outline-color: var(--accent); }
+  .markdown-body[contenteditable="true"] table,
+  .markdown-body[contenteditable="true"] pre { background-color: var(--bg-soft); cursor: default; }
 
   @media (max-width: 760px) {
     .layout { flex-direction: column; }
@@ -223,7 +225,8 @@
           • 点击「打开文件」或「＋ 新增页面」<br/>
           • 已有内容时再拖入文件 = 自动新增一页<br/>
           • 顶部标签可随时切换 / 关闭多个页面<br/>
-          • 点「✏️ 编辑」可直接在右侧显示页里修改内容
+          • 点「✏️ 编辑」可直接在右侧显示页里修改内容<br/>
+          • 左右两侧选中文字会自动同步高亮对应内容
         </div>
       </div>
       <article class="markdown-body" id="preview"></article>
@@ -294,6 +297,7 @@
     welcome.classList.add("hidden");
     preview.innerHTML = DOMPurify.sanitize(marked.parse(raw));
     preview.querySelectorAll("pre code").forEach(function (b) { try { hljs.highlightElement(b); } catch (e) {} });
+    if (editMode) relock();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
@@ -561,16 +565,27 @@
   }
 
   const btnEditPreview = document.getElementById("btn-edit-preview");
+  // 锁定易损坏的复杂结构（表格 / 代码块），避免编辑模式里结构被破坏
+  function relock() {
+    preview.querySelectorAll("table, pre").forEach(function (el) {
+      el.setAttribute("contenteditable", "false");
+      el.title = "此区域请在左侧 Markdown 源码中编辑";
+    });
+  }
   function setEditMode(on) {
     editMode = on;
     if (on) {
       preview.setAttribute("contenteditable", "true");
+      relock();
       welcome.classList.add("hidden");
       btnEditPreview.textContent = "✅ 完成编辑";
       btnEditPreview.classList.add("primary");
       preview.focus();
     } else {
       preview.removeAttribute("contenteditable");
+      preview.querySelectorAll("table, pre").forEach(function (el) {
+        el.removeAttribute("contenteditable"); el.removeAttribute("title");
+      });
       btnEditPreview.textContent = "✏️ 编辑";
       btnEditPreview.classList.remove("primary");
       const md = htmlToMarkdown(preview);
@@ -592,6 +607,78 @@
       renderTabs(); persist();
       meta.textContent = "编辑中 · " + md.replace(/\s/g, "").length + " 字符";
     }, 400);
+  });
+
+  // ---------- 双向选区同步（左源码 ⇄ 右预览） ----------
+  let syncingSel = false, selTimer;
+  function stripMd(s) {
+    return s
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")   // 链接/图片 → 显示文本
+      .replace(/^[ \t]{0,3}[#>\-*+]+/gm, "")        // 行首标记
+      .replace(/[`*_]/g, "");                        // 行内标记
+  }
+  // 在 root 的文本节点中按拼接文本定位子串，返回 Range
+  function locateRange(root, text) {
+    if (!text) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const map = []; let n, full = "";
+    while ((n = walker.nextNode())) { map.push({ node: n, start: full.length }); full += n.textContent; }
+    map.forEach(function (m, i) { m.end = (i + 1 < map.length ? map[i + 1].start : full.length); });
+    const idx = full.indexOf(text);
+    if (idx < 0) return null;
+    const a = idx, b = idx + text.length;
+    function at(pos) {
+      for (let i = 0; i < map.length; i++) {
+        if (pos <= map[i].end) return { node: map[i].node, offset: pos - map[i].start };
+      }
+      const last = map[map.length - 1];
+      return { node: last.node, offset: last.node.textContent.length };
+    }
+    const r = document.createRange();
+    const s = at(a), e = at(b);
+    r.setStart(s.node, s.offset); r.setEnd(e.node, e.offset);
+    return r;
+  }
+  function selectInPreview(text) {
+    let range = locateRange(preview, text);
+    if (!range) range = locateRange(preview, text.trim());
+    if (!range) range = locateRange(preview, stripMd(text));
+    if (!range) return;
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    const rect = range.getBoundingClientRect();
+    if (rect && (rect.top < 0 || rect.bottom > window.innerHeight)) {
+      const sc = range.startContainer;
+      if (sc.nodeType === 3) sc.parentElement.scrollIntoView({ block: "center" });
+    }
+  }
+  function selectInTextarea(text) {
+    let needle = text, s = editor.value.indexOf(needle);
+    if (s < 0) { needle = text.trim(); s = editor.value.indexOf(needle); }
+    if (s < 0) { needle = stripMd(text).trim(); s = editor.value.indexOf(needle); }
+    if (s < 0 && text.length > 10) {
+      needle = text.slice(Math.floor(text.length / 3), Math.ceil(text.length * 2 / 3));
+      s = editor.value.indexOf(needle);
+    }
+    if (s < 0) return;
+    editor.focus();
+    editor.setSelectionRange(s, s + needle.length);
+  }
+  document.addEventListener("selectionchange", function () {
+    if (syncingSel) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    const anc = sel.anchorNode; if (!anc) return;
+    const inPreview = preview.contains(anc);
+    const inEditor = (anc === editor) || editor.contains(anc);
+    if (!inPreview && !inEditor) return;
+    const text = sel.toString();
+    if (!text.trim()) return;
+    clearTimeout(selTimer);
+    selTimer = setTimeout(function () {
+      syncingSel = true;
+      if (inPreview) selectInTextarea(text); else selectInPreview(text);
+      setTimeout(function () { syncingSel = false; }, 0);
+    }, 120);
   });
 
   // ---------- 启动 ----------
