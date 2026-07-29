@@ -202,25 +202,26 @@
   .sync-hl { background: #ffeb3b !important; color: inherit !important; border-radius: 3px; padding: 0 2px; transition: background .4s ease-out; }
   .sync-hl.fade { background: transparent !important; }
 
-  /* ---------- 表格编辑手柄（始终可见的醒目按钮） ---------- */
+  /* ---------- 表格编辑手柄（悬停表格时显示，固定在表格边框上） ---------- */
   .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: visible; }
   .table-handle {
     position: absolute; pointer-events: auto; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    opacity: 1;
-    width: 26px; height: 26px;
+    opacity: 0; transition: opacity .12s, transform .12s;
+    width: 28px; height: 28px;
     background: var(--accent); color: #fff; border-radius: 6px;
-    font-size: 18px; font-weight: 700; line-height: 1;
-    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+    font-size: 20px; font-weight: 700; line-height: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,.3);
     border: 2px solid #fff;
   }
-  .table-handle:hover { transform: scale(1.12); filter: brightness(1.1); }
+  .table-handle.show { opacity: 1; }
+  .table-handle:hover { transform: scale(1.15); filter: brightness(1.12); }
   .table-handle::before { content: "+"; }
   .table-row-handle {
-    left: 4px;
+    margin-left: -14px; /* 让手柄中心压在表格左边框上 */
   }
   .table-col-handle {
-    top: 4px;
+    margin-top: -14px; /* 让手柄中心压在表格上边框上 */
   }
   .table-ctx-menu {
     position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
@@ -364,7 +365,7 @@
     // 预览区始终可编辑；代码块保持锁定，防止结构被破坏
     preview.setAttribute("contenteditable", "true");
     preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
-    positionAllHandles();
+    hideHandles();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
@@ -833,80 +834,101 @@
     ctxMenu.classList.add("show");
   }
 
-  function positionAllHandles() {
+  function positionHandlesForTable(table) {
+    activeTable = table;
     handleLayer.innerHTML = "";
-    const tables = preview.querySelectorAll("table");
-    if (!tables.length) return;
     const pane = document.getElementById("pane-preview");
     const paneRect = pane.getBoundingClientRect();
     const scrollLeft = pane.scrollLeft;
     const scrollTop = pane.scrollTop;
+    const tableRect = table.getBoundingClientRect();
+    const baseLeft = tableRect.left - paneRect.left + scrollLeft;
+    const baseTop = tableRect.top - paneRect.top + scrollTop;
+    const rows = table.querySelectorAll("tr");
 
-    tables.forEach(function (table) {
-      const tableRect = table.getBoundingClientRect();
-      const baseLeft = tableRect.left - paneRect.left + scrollLeft;
-      const baseTop = tableRect.top - paneRect.top + scrollTop;
-      const rows = table.querySelectorAll("tr");
+    // 行手柄（左侧，每行一个，垂直居中，中心压在表格左边框）
+    rows.forEach(function (row) {
+      const rect = row.getBoundingClientRect();
+      // 跳过完全不可见的行
+      if (rect.bottom < paneRect.top || rect.top > paneRect.bottom) return;
+      const h = document.createElement("div");
+      h.className = "table-handle table-row-handle show";
+      h.style.top = (rect.top - paneRect.top + scrollTop + rect.height / 2 - 14) + "px";
+      h.style.left = baseLeft + "px";
+      h.title = "行操作";
+      h.addEventListener("click", function (e) {
+        e.stopPropagation();
+        activeCell = row.children[0];
+        const hr = h.getBoundingClientRect();
+        const pr = handleLayer.getBoundingClientRect();
+        showMenu(hr.right - pr.left, hr.top - pr.top, [
+          { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
+          { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
+          { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
+        ]);
+      });
+      handleLayer.appendChild(h);
+    });
 
-      // 行手柄（左侧，每行一个，垂直居中）
-      rows.forEach(function (row) {
-        const rect = row.getBoundingClientRect();
+    // 列手柄（上方，每列一个，水平居中，中心压在表格上边框）
+    const firstRow = rows[0];
+    if (firstRow) {
+      const cells = firstRow.children;
+      for (var i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        const rect = cell.getBoundingClientRect();
+        if (rect.right < paneRect.left || rect.left > paneRect.right) return;
         const h = document.createElement("div");
-        h.className = "table-handle table-row-handle";
-        h.style.top = (rect.top - paneRect.top + scrollTop + rect.height / 2 - 13) + "px";
-        h.style.left = (baseLeft - 32) + "px";
-        h.title = "行操作";
+        h.className = "table-handle table-col-handle show";
+        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 14) + "px";
+        h.style.top = baseTop + "px";
+        h.title = "列操作";
         h.addEventListener("click", function (e) {
           e.stopPropagation();
-          activeCell = row.children[0];
+          activeCell = cell;
           const hr = h.getBoundingClientRect();
           const pr = handleLayer.getBoundingClientRect();
-          showMenu(hr.right - pr.left, hr.top - pr.top, [
-            { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
-            { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
-            { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
+          showMenu(hr.left - pr.left, hr.bottom - pr.top, [
+            { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
+            { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
+            { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
           ]);
         });
         handleLayer.appendChild(h);
-      });
-
-      // 列手柄（上方，每列一个，水平居中）
-      const firstRow = rows[0];
-      if (firstRow) {
-        const cells = firstRow.children;
-        for (var i = 0; i < cells.length; i++) {
-          const cell = cells[i];
-          const rect = cell.getBoundingClientRect();
-          const h = document.createElement("div");
-          h.className = "table-handle table-col-handle";
-          h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 13) + "px";
-          h.style.top = (baseTop - 32) + "px";
-          h.title = "列操作";
-          h.addEventListener("click", function (e) {
-            e.stopPropagation();
-            activeCell = cell;
-            const hr = h.getBoundingClientRect();
-            const pr = handleLayer.getBoundingClientRect();
-            showMenu(hr.left - pr.left, hr.bottom - pr.top, [
-              { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
-              { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
-              { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
-            ]);
-          });
-          handleLayer.appendChild(h);
-        }
       }
-    });
+    }
   }
 
-  // 窗口大小变化时重新定位
+  // 鼠标进入表格时显示该表格手柄；离开时隐藏
+  preview.addEventListener("mouseover", function (e) {
+    const table = e.target.closest && e.target.closest("table");
+    if (table && preview.contains(table)) {
+      if (activeTable !== table) positionHandlesForTable(table);
+      clearTimeout(hideTimer);
+    }
+  });
+  preview.addEventListener("mouseout", function (e) {
+    const table = e.target.closest && e.target.closest("table");
+    if (table) {
+      hideTimer = setTimeout(function () {
+        if (!handleLayer.matches(":hover") && !ctxMenu.matches(":hover")) { hideHandles(); hideMenu(); }
+      }, 250);
+    }
+  });
+  handleLayer.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
+  handleLayer.addEventListener("mouseleave", function () { hideTimer = setTimeout(hideHandles, 250); });
+  ctxMenu.addEventListener("mouseleave", function () { hideMenu(); hideHandles(); });
+
+  // 窗口大小变化时若正显示手柄则重绘
   let resizeT;
   window.addEventListener("resize", function () {
     clearTimeout(resizeT);
-    resizeT = setTimeout(positionAllHandles, 150);
+    resizeT = setTimeout(function () {
+      if (activeTable && preview.contains(activeTable)) positionHandlesForTable(activeTable);
+    }, 150);
   });
 
-  // 点击非菜单区域关闭菜单
+  // 点击非手柄/菜单区域关闭菜单
   document.addEventListener("click", function (e) {
     if (!e.target.closest(".table-handle") && !e.target.closest(".table-ctx-menu")) {
       hideMenu();
