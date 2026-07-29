@@ -202,21 +202,46 @@
   .sync-hl { background: #ffeb3b !important; color: inherit !important; border-radius: 3px; padding: 0 2px; transition: background .4s ease-out; }
   .sync-hl.fade { background: transparent !important; }
 
-  /* ---------- 表格编辑工具栏 ---------- */
-  .table-tools {
-    position: absolute; z-index: 100; display: none; flex-wrap: wrap; gap: 4px;
-    background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 10px;
-    padding: 6px; box-shadow: var(--shadow); backdrop-filter: saturate(180%) blur(8px);
-    max-width: 240px;
+  /* ---------- 表格编辑手柄（飞书式边缘手柄） ---------- */
+  .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: hidden; }
+  .table-handle {
+    position: absolute; pointer-events: auto; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .15s;
   }
-  .table-tools.show { display: flex; }
-  .table-tools button {
-    appearance: none; border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
-    padding: 5px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  .table-handle:hover, .table-handle.active { opacity: 1; }
+  .table-handle-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--border); color: var(--muted); font-size: 12px; line-height: 14px;
+    text-align: center; transition: all .15s;
   }
-  .table-tools button:hover { border-color: var(--accent); color: var(--accent); }
-  .table-tools button.danger:hover { border-color: #cf222e; color: #cf222e; }
-  .markdown-body td, .markdown-body th { position: relative; }
+  .table-handle:hover .table-handle-dot, .table-handle.active .table-handle-dot {
+    background: var(--accent); color: #fff; transform: scale(1.15);
+  }
+  .table-row-handle {
+    left: 4px; width: 20px;
+  }
+  .table-row-handle .table-handle-dot::before { content: "•"; }
+  .table-row-handle:hover .table-handle-dot::before { content: "+"; font-size: 13px; }
+  .table-col-handle {
+    top: 4px; height: 20px;
+  }
+  .table-col-handle .table-handle-dot::before { content: "•"; }
+  .table-col-handle:hover .table-handle-dot::before { content: "+"; font-size: 13px; }
+  .table-ctx-menu {
+    position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
+    background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 4px; box-shadow: var(--shadow); backdrop-filter: saturate(180%) blur(8px);
+    min-width: 120px;
+  }
+  .table-ctx-menu.show { display: flex; }
+  .table-ctx-menu button {
+    appearance: none; border: none; background: transparent; color: var(--fg);
+    padding: 5px 10px; border-radius: 5px; font-size: 12px; text-align: left; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .table-ctx-menu button:hover { background: var(--bg-soft); color: var(--accent); }
+  .table-ctx-menu button.danger:hover { color: #cf222e; }
 
   @media (max-width: 760px) {
     .layout { flex-direction: column; }
@@ -279,14 +304,8 @@
     <div class="inner">📄 松开以加载（已有内容将自动新增一页）</div>
   </div>
 
-  <div class="table-tools" id="table-tools">
-    <button data-action="row-before">➕ 上方插入行</button>
-    <button data-action="row-after">➕ 下方插入行</button>
-    <button data-action="col-before">➕ 左侧插入列</button>
-    <button data-action="col-after">➕ 右侧插入列</button>
-    <button data-action="del-row" class="danger">❌ 删除行</button>
-    <button data-action="del-col" class="danger">❌ 删除列</button>
-  </div>
+  <div class="table-handle-layer" id="table-handle-layer"></div>
+  <div class="table-ctx-menu" id="table-ctx-menu"></div>
 
 <script>
 (function () {
@@ -716,35 +735,11 @@
     }, 400);
   });
 
-  // ---------- 表格增删行列工具栏 ----------
-  const tableTools = document.getElementById("table-tools");
-  let currentCell = null;
+  // ---------- 表格增删行列：飞书式边缘手柄 ----------
+  const handleLayer = document.getElementById("table-handle-layer");
+  const ctxMenu = document.getElementById("table-ctx-menu");
+  let activeTable = null, activeCell = null, hideTimer = null;
 
-  function hideTableTools() {
-    tableTools.classList.remove("show");
-    currentCell = null;
-  }
-
-  function showTableTools(cell) {
-    currentCell = cell;
-    const rect = cell.getBoundingClientRect();
-    const paneRect = document.getElementById("pane-preview").getBoundingClientRect();
-    tableTools.style.left = (rect.left - paneRect.left + 8) + "px";
-    tableTools.style.top = (rect.bottom - paneRect.top + 4) + "px";
-    tableTools.classList.add("show");
-  }
-
-  // 点击表格单元格时显示工具栏；点击非表格区域时隐藏
-  preview.addEventListener("click", function (e) {
-    const cell = e.target.closest && e.target.closest("td, th");
-    if (cell && preview.contains(cell)) {
-      showTableTools(cell);
-    } else {
-      hideTableTools();
-    }
-  });
-
-  // 表格结构变更后立即同步回 Markdown
   function afterTableChange() {
     const md = htmlToMarkdown(preview);
     const p = activePage(); if (p) p.content = md;
@@ -796,7 +791,7 @@
   function deleteRow(cell) {
     const row = cell.parentNode;
     const tbody = row.parentNode;
-    if (tbody.children.length <= 1) return; // 至少保留一行
+    if (tbody.children.length <= 1) return;
     tbody.removeChild(row);
     afterTableChange();
   }
@@ -809,25 +804,132 @@
     const rows = table.querySelectorAll("tr");
     rows.forEach(function (tr) {
       const cells = tr.children;
-      if (cells.length <= 1) return; // 至少保留一列
+      if (cells.length <= 1) return;
       if (cells[idx]) tr.removeChild(cells[idx]);
     });
     afterTableChange();
   }
 
-  tableTools.addEventListener("click", function (e) {
-    const btn = e.target.closest("button[data-action]");
-    if (!btn || !currentCell) return;
-    const action = btn.getAttribute("data-action");
-    switch (action) {
-      case "row-before": insertRow(currentCell, false); break;
-      case "row-after": insertRow(currentCell, true); break;
-      case "col-before": insertCol(currentCell, false); break;
-      case "col-after": insertCol(currentCell, true); break;
-      case "del-row": deleteRow(currentCell); break;
-      case "del-col": deleteCol(currentCell); break;
+  function hideHandles() {
+    handleLayer.innerHTML = "";
+    activeTable = null;
+  }
+
+  function hideMenu() {
+    ctxMenu.classList.remove("show");
+    activeCell = null;
+    document.querySelectorAll(".table-handle.active").forEach(function (h) { h.classList.remove("active"); });
+  }
+
+  function showMenu(x, y, items) {
+    ctxMenu.innerHTML = "";
+    items.forEach(function (item) {
+      const btn = document.createElement("button");
+      btn.textContent = item.label;
+      if (item.danger) btn.className = "danger";
+      btn.addEventListener("click", function () {
+        item.action();
+        hideMenu();
+      });
+      ctxMenu.appendChild(btn);
+    });
+    ctxMenu.style.left = x + "px";
+    ctxMenu.style.top = y + "px";
+    ctxMenu.classList.add("show");
+  }
+
+  function positionHandles(table) {
+    activeTable = table;
+    handleLayer.innerHTML = "";
+    const paneRect = document.getElementById("pane-preview").getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const scrollLeft = document.getElementById("pane-preview").scrollLeft;
+    const scrollTop = document.getElementById("pane-preview").scrollTop;
+
+    // 行手柄（左侧）
+    const rows = table.querySelectorAll("tr");
+    rows.forEach(function (row, i) {
+      const rect = row.getBoundingClientRect();
+      const h = document.createElement("div");
+      h.className = "table-handle table-row-handle";
+      h.style.top = (rect.top - paneRect.top + scrollTop) + "px";
+      h.style.left = (tableRect.left - paneRect.left + scrollLeft - 10) + "px";
+      h.style.height = rect.height + "px";
+      h.title = "行操作";
+      h.innerHTML = '<span class="table-handle-dot"></span>';
+      h.addEventListener("click", function (e) {
+        e.stopPropagation();
+        activeCell = row.children[0];
+        document.querySelectorAll(".table-handle.active").forEach(function (x) { x.classList.remove("active"); });
+        h.classList.add("active");
+        const hr = h.getBoundingClientRect();
+        const pr = handleLayer.getBoundingClientRect();
+        showMenu(hr.right - pr.left, hr.top - pr.top, [
+          { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
+          { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
+          { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
+        ]);
+      });
+      handleLayer.appendChild(h);
+    });
+
+    // 列手柄（上方）
+    const firstRow = rows[0];
+    if (firstRow) {
+      const cells = firstRow.children;
+      for (var i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        const rect = cell.getBoundingClientRect();
+        const h = document.createElement("div");
+        h.className = "table-handle table-col-handle";
+        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 7) + "px";
+        h.style.top = (tableRect.top - paneRect.top + scrollTop - 10) + "px";
+        h.style.width = rect.width + "px";
+        h.title = "列操作";
+        h.innerHTML = '<span class="table-handle-dot"></span>';
+        h.addEventListener("click", function (e) {
+          e.stopPropagation();
+          activeCell = cell;
+          document.querySelectorAll(".table-handle.active").forEach(function (x) { x.classList.remove("active"); });
+          h.classList.add("active");
+          const hr = h.getBoundingClientRect();
+          const pr = handleLayer.getBoundingClientRect();
+          showMenu(hr.left - pr.left, hr.bottom - pr.top, [
+            { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
+            { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
+            { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
+          ]);
+        });
+        handleLayer.appendChild(h);
+      }
     }
-    hideTableTools();
+  }
+
+  // 鼠标进入表格时显示手柄，离开时延迟隐藏
+  preview.addEventListener("mouseover", function (e) {
+    const table = e.target.closest && e.target.closest("table");
+    if (table && preview.contains(table)) {
+      if (activeTable !== table) positionHandles(table);
+      clearTimeout(hideTimer);
+    }
+  });
+  preview.addEventListener("mouseout", function (e) {
+    const table = e.target.closest && e.target.closest("table");
+    if (table) {
+      hideTimer = setTimeout(function () {
+        if (!handleLayer.matches(":hover") && !ctxMenu.matches(":hover")) { hideHandles(); hideMenu(); }
+      }, 200);
+    }
+  });
+  handleLayer.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
+  handleLayer.addEventListener("mouseleave", function () { hideTimer = setTimeout(hideHandles, 200); });
+  ctxMenu.addEventListener("mouseleave", function () { hideMenu(); hideHandles(); });
+
+  // 点击非手柄/菜单区域关闭
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest(".table-handle") && !e.target.closest(".table-ctx-menu")) {
+      hideMenu();
+    }
   });
 
   // ---------- 选区同步（左源码 → 右预览高亮，右预览 → 左源码选中） ----------
