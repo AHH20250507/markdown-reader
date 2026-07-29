@@ -195,14 +195,28 @@
   .markdown-body input[type="checkbox"] { margin-right: 6px; }
   .markdown-body .task-list-item { list-style: none; margin-left: -1.4em; }
   .markdown-body kbd { background: var(--bg-soft); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font-size: .85em; }
-  .markdown-body[contenteditable="true"] { outline: 2px dashed var(--accent); outline-offset: -2px; cursor: text; border-radius: 12px; transition: outline-color .2s; }
-  .markdown-body[contenteditable="true"]:focus { outline-color: var(--accent); }
-  .markdown-body[contenteditable="true"] table,
-  .markdown-body[contenteditable="true"] pre { background-color: var(--bg-soft); cursor: default; }
+  .markdown-body { outline: none; cursor: text; }
+  .markdown-body pre { cursor: default; }
 
   /* ---------- 选区同步高亮（临时标记） ---------- */
   .sync-hl { background: #ffeb3b !important; color: inherit !important; border-radius: 3px; padding: 0 2px; transition: background .4s ease-out; }
   .sync-hl.fade { background: transparent !important; }
+
+  /* ---------- 表格编辑工具栏 ---------- */
+  .table-tools {
+    position: absolute; z-index: 100; display: none; flex-wrap: wrap; gap: 4px;
+    background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 6px; box-shadow: var(--shadow); backdrop-filter: saturate(180%) blur(8px);
+    max-width: 240px;
+  }
+  .table-tools.show { display: flex; }
+  .table-tools button {
+    appearance: none; border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
+    padding: 5px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .table-tools button:hover { border-color: var(--accent); color: var(--accent); }
+  .table-tools button.danger:hover { border-color: #cf222e; color: #cf222e; }
+  .markdown-body td, .markdown-body th { position: relative; }
 
   @media (max-width: 760px) {
     .layout { flex-direction: column; }
@@ -219,7 +233,6 @@
     <button class="btn primary" id="btn-add">＋ 新增页面</button>
     <button class="btn danger" id="btn-clear">清空</button>
     <button class="btn" id="btn-toggle-editor">隐藏编辑</button>
-    <button class="btn" id="btn-edit-preview">✏️ 编辑</button>
     <button class="btn" id="btn-theme">🌗 主题</button>
     <button class="btn" id="btn-search">🔍 搜索</button>
     <button class="btn" id="btn-copy">复制 MD</button>
@@ -253,7 +266,7 @@
           • 点击「打开文件」或「＋ 新增页面」<br/>
           • 已有内容时再拖入文件 = 自动新增一页<br/>
           • 顶部标签可随时切换 / 关闭多个页面<br/>
-          • 点「✏️ 编辑」可直接在右侧显示页里修改内容<br/>
+          • 右侧显示页可直接修改文字和表格内容<br/>
           • 左右两侧选中文字会自动同步高亮对应内容<br/>
           • 按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 打开搜索，左右两侧同步高亮匹配
         </div>
@@ -264,6 +277,15 @@
 
   <div class="drop-overlay" id="drop-overlay">
     <div class="inner">📄 松开以加载（已有内容将自动新增一页）</div>
+  </div>
+
+  <div class="table-tools" id="table-tools">
+    <button data-action="row-before">➕ 上方插入行</button>
+    <button data-action="row-after">➕ 下方插入行</button>
+    <button data-action="col-before">➕ 左侧插入列</button>
+    <button data-action="col-after">➕ 右侧插入列</button>
+    <button data-action="del-row" class="danger">❌ 删除行</button>
+    <button data-action="del-col" class="danger">❌ 删除列</button>
   </div>
 
 <script>
@@ -321,12 +343,14 @@
   function renderPreview() {
     const raw = editor.value;
     if (raw.trim() === "") {
-      preview.innerHTML = ""; welcome.classList.toggle("hidden", editMode); meta.textContent = "就绪"; return;
+      preview.innerHTML = ""; welcome.classList.add("hidden"); meta.textContent = "就绪"; return;
     }
     welcome.classList.add("hidden");
     preview.innerHTML = DOMPurify.sanitize(marked.parse(raw));
     preview.querySelectorAll("pre code").forEach(function (b) { try { hljs.highlightElement(b); } catch (e) {} });
-    if (editMode) relock();
+    // 预览区始终可编辑；代码块保持锁定，防止结构被破坏
+    preview.setAttribute("contenteditable", "true");
+    preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
@@ -354,16 +378,23 @@
     });
   }
 
+  // 立即把右侧预览的编辑内容转回 Markdown 并同步到 editor 和当前页
+  function flushPreviewEdit() {
+    clearTimeout(editT);
+    const md = htmlToMarkdown(preview);
+    const p = activePage(); if (p) p.content = md;
+    editor.value = md;
+  }
+
   function switchPage(id) {
-    const cur = activePage();
-    if (cur) { cur.content = editMode ? htmlToMarkdown(preview) : editor.value; }
+    flushPreviewEdit();
     activeId = id;
     editor.value = activePage().content;
     renderPreview(); renderTabs(); persist();
   }
 
   function closePage(id) {
-    if (editMode && id === activeId) { const c = activePage(); if (c) c.content = htmlToMarkdown(preview); }
+    flushPreviewEdit();
     const idx = pages.findIndex(function (p) { return p.id === id; });
     if (idx < 0) return;
     pages.splice(idx, 1);
@@ -374,7 +405,7 @@
   }
 
   function addPage() {
-    const cur = activePage(); if (cur) cur.content = editor.value;
+    flushPreviewEdit();
     const p = newPage(); pages.push(p); activeId = p.id;
     editor.value = ""; renderPreview(); renderTabs(); persist();
     editor.focus();
@@ -401,9 +432,7 @@
   }
 
   // ---------- 编辑器输入（防抖） ----------
-  let t;
-  let editMode = false;   // 右侧预览区是否处于「直接编辑」状态
-  let editT;
+  let t, editT;
   editor.addEventListener("input", function () {
     clearTimeout(t);
     t = setTimeout(function () {
@@ -516,31 +545,23 @@
       'tr:nth-child(2n) td{background:#f6f8fa}' +
       '.task-list-item{list-style:none;margin-left:-1.4em}' +
       '#content{outline:none}' +
-      '#content[contenteditable="true"]{outline:2px dashed #0969da;outline-offset:4px;border-radius:4px}' +
       '@media print {.toolbar,#msg{display:none!important}}' +
       '</style></head><body>' +
       '<div class="toolbar">' +
-        '<button id="b-edit">✏️ 编辑</button>' +
-        '<button id="b-done" style="display:none">✅ 完成编辑</button>' +
         '<button class="primary" id="b-save">📥 导出 HTML</button>' +
         '<span id="msg"></span>' +
         '<button id="b-print">🖨️ 打印</button>' +
       '</div>' +
-      '<div id="content">' + clean + '</div>' +
+      '<div id="content" contenteditable="true">' + clean + '</div>' +
       '<script>' +
       '(function(){' +
         'var content=document.getElementById("content");' +
-        'var editBtn=document.getElementById("b-edit");' +
-        'var doneBtn=document.getElementById("b-done");' +
         'var saveBtn=document.getElementById("b-save");' +
         'var printBtn=document.getElementById("b-print");' +
         'var msgEl=document.getElementById("msg");' +
         'var dirty=false;' +
         'function setMsg(t){msgEl.textContent=t;setTimeout(function(){msgEl.textContent=""},3000);}' +
-        'function markDirty(){dirty=true;}' +
-        'editBtn.addEventListener("click",function(){content.contentEditable="true";content.focus();editBtn.style.display="none";doneBtn.style.display="inline-block";});' +
-        'doneBtn.addEventListener("click",function(){content.contentEditable="false";doneBtn.style.display="none";editBtn.style.display="inline-block";});' +
-        'content.addEventListener("input",markDirty);' +
+        'content.addEventListener("input",function(){dirty=true;});' +
         'printBtn.addEventListener("click",function(){window.print();});' +
         'saveBtn.addEventListener("click",function(){' +
           'var html="<!DOCTYPE html>"+document.documentElement.outerHTML;' +
@@ -566,7 +587,7 @@
     a.download = docTitle + ".html";
     a.click();
     URL.revokeObjectURL(a.href);
-    meta.textContent = "已导出可编辑 HTML（支持编辑+Ctrl+S 保存）";
+    meta.textContent = "已导出可编辑 HTML（直接编辑后导出即可）";
   });
 
   function escapeHtml(s) {
@@ -683,41 +704,8 @@
     return block(root, 0).replace(/\n{3,}/g, "\n\n").trim() + "\n";
   }
 
-  const btnEditPreview = document.getElementById("btn-edit-preview");
-  // 锁定易损坏的复杂结构（表格 / 代码块），避免编辑模式里结构被破坏
-  function relock() {
-    preview.querySelectorAll("table, pre").forEach(function (el) {
-      el.setAttribute("contenteditable", "false");
-      el.title = "此区域请在左侧 Markdown 源码中编辑";
-    });
-  }
-  function setEditMode(on) {
-    editMode = on;
-    if (on) {
-      preview.setAttribute("contenteditable", "true");
-      relock();
-      welcome.classList.add("hidden");
-      btnEditPreview.textContent = "✅ 完成编辑";
-      btnEditPreview.classList.add("primary");
-      preview.focus();
-    } else {
-      preview.removeAttribute("contenteditable");
-      preview.querySelectorAll("table, pre").forEach(function (el) {
-        el.removeAttribute("contenteditable"); el.removeAttribute("title");
-      });
-      btnEditPreview.textContent = "✏️ 编辑";
-      btnEditPreview.classList.remove("primary");
-      const md = htmlToMarkdown(preview);
-      const p = activePage(); if (p) p.content = md;
-      editor.value = md;
-      renderPreview(); renderTabs(); persist();
-      meta.textContent = "已保存编辑内容";
-    }
-  }
-  btnEditPreview.addEventListener("click", function () { setEditMode(!editMode); });
-
+  // ---------- 右侧预览区始终可编辑，实时回写 Markdown ----------
   preview.addEventListener("input", function () {
-    if (!editMode) return;
     clearTimeout(editT);
     editT = setTimeout(function () {
       const md = htmlToMarkdown(preview);
@@ -726,6 +714,120 @@
       renderTabs(); persist();
       meta.textContent = "编辑中 · " + md.replace(/\s/g, "").length + " 字符";
     }, 400);
+  });
+
+  // ---------- 表格增删行列工具栏 ----------
+  const tableTools = document.getElementById("table-tools");
+  let currentCell = null;
+
+  function hideTableTools() {
+    tableTools.classList.remove("show");
+    currentCell = null;
+  }
+
+  function showTableTools(cell) {
+    currentCell = cell;
+    const rect = cell.getBoundingClientRect();
+    const paneRect = document.getElementById("pane-preview").getBoundingClientRect();
+    tableTools.style.left = (rect.left - paneRect.left + 8) + "px";
+    tableTools.style.top = (rect.bottom - paneRect.top + 4) + "px";
+    tableTools.classList.add("show");
+  }
+
+  // 点击表格单元格时显示工具栏；点击非表格区域时隐藏
+  preview.addEventListener("click", function (e) {
+    const cell = e.target.closest && e.target.closest("td, th");
+    if (cell && preview.contains(cell)) {
+      showTableTools(cell);
+    } else {
+      hideTableTools();
+    }
+  });
+
+  // 表格结构变更后立即同步回 Markdown
+  function afterTableChange() {
+    const md = htmlToMarkdown(preview);
+    const p = activePage(); if (p) p.content = md;
+    editor.value = md;
+    renderPreview(); renderTabs(); persist();
+    meta.textContent = "已更新表格结构";
+  }
+
+  function getCellIndex(cell) {
+    const row = cell.parentNode;
+    if (!row) return -1;
+    const cells = Array.prototype.slice.call(row.children);
+    return cells.indexOf(cell);
+  }
+
+  function insertRow(cell, after) {
+    const table = cell.closest("table");
+    const row = cell.parentNode;
+    if (!table || !row) return;
+    const colCount = row.children.length;
+    const newRow = document.createElement("tr");
+    for (var i = 0; i < colCount; i++) {
+      const td = document.createElement("td");
+      td.innerHTML = "&nbsp;";
+      newRow.appendChild(td);
+    }
+    if (after) row.parentNode.insertBefore(newRow, row.nextSibling);
+    else row.parentNode.insertBefore(newRow, row);
+    afterTableChange();
+  }
+
+  function insertCol(cell, after) {
+    const table = cell.closest("table");
+    if (!table) return;
+    const idx = getCellIndex(cell);
+    if (idx < 0) return;
+    const rows = table.querySelectorAll("tr");
+    rows.forEach(function (tr, ri) {
+      const cells = tr.children;
+      const targetIdx = after ? idx + 1 : idx;
+      const newCell = document.createElement(ri === 0 && cells[0] && cells[0].tagName.toLowerCase() === "th" ? "th" : "td");
+      newCell.innerHTML = "&nbsp;";
+      if (targetIdx >= cells.length) tr.appendChild(newCell);
+      else tr.insertBefore(newCell, cells[targetIdx]);
+    });
+    afterTableChange();
+  }
+
+  function deleteRow(cell) {
+    const row = cell.parentNode;
+    const tbody = row.parentNode;
+    if (tbody.children.length <= 1) return; // 至少保留一行
+    tbody.removeChild(row);
+    afterTableChange();
+  }
+
+  function deleteCol(cell) {
+    const table = cell.closest("table");
+    if (!table) return;
+    const idx = getCellIndex(cell);
+    if (idx < 0) return;
+    const rows = table.querySelectorAll("tr");
+    rows.forEach(function (tr) {
+      const cells = tr.children;
+      if (cells.length <= 1) return; // 至少保留一列
+      if (cells[idx]) tr.removeChild(cells[idx]);
+    });
+    afterTableChange();
+  }
+
+  tableTools.addEventListener("click", function (e) {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn || !currentCell) return;
+    const action = btn.getAttribute("data-action");
+    switch (action) {
+      case "row-before": insertRow(currentCell, false); break;
+      case "row-after": insertRow(currentCell, true); break;
+      case "col-before": insertCol(currentCell, false); break;
+      case "col-after": insertCol(currentCell, true); break;
+      case "del-row": deleteRow(currentCell); break;
+      case "del-col": deleteCol(currentCell); break;
+    }
+    hideTableTools();
   });
 
   // ---------- 选区同步（左源码 → 右预览高亮，右预览 → 左源码选中） ----------
