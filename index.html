@@ -89,6 +89,20 @@
   .btn.danger:hover { border-color: #cf222e; color: #cf222e; }
   .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
+  /* ---------- 搜索栏 ---------- */
+  .searchbar {
+    display: none; align-items: center; gap: 8px;
+    padding: 8px 16px; background: var(--toolbar-bg);
+    border-bottom: 1px solid var(--border); backdrop-filter: saturate(180%) blur(8px);
+  }
+  .searchbar.show { display: flex; }
+  .searchbar input {
+    flex: 1; max-width: 360px; padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 13px; outline: none;
+  }
+  .searchbar input:focus { border-color: var(--accent); }
+  .search-count { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 80px; }
+
   /* ---------- 标签栏（多页面切换） ---------- */
   .tabbar {
     flex: 0 0 auto; display: flex; align-items: stretch; gap: 2px;
@@ -207,12 +221,21 @@
     <button class="btn" id="btn-toggle-editor">隐藏编辑</button>
     <button class="btn" id="btn-edit-preview">✏️ 编辑</button>
     <button class="btn" id="btn-theme">🌗 主题</button>
+    <button class="btn" id="btn-search">🔍 搜索</button>
     <button class="btn" id="btn-copy">复制 MD</button>
     <button class="btn" id="btn-export-md">导出 MD</button>
     <button class="btn" id="btn-export">导出 HTML</button>
     <div class="spacer"></div>
     <span class="meta" id="meta">就绪</span>
     <input type="file" id="file-input" accept=".md,.markdown,.txt,text/markdown,text/plain" class="hidden" />
+  </div>
+
+  <div class="searchbar" id="searchbar">
+    <input type="text" id="search-input" placeholder="搜索 Markdown 内容…" autocomplete="off" />
+    <button class="btn" id="search-prev">↑ 上一个</button>
+    <button class="btn" id="search-next">↓ 下一个</button>
+    <span class="search-count" id="search-count"></span>
+    <button class="btn" id="search-close">✕ 关闭</button>
   </div>
 
   <div class="tabbar" id="tabbar"></div>
@@ -231,7 +254,8 @@
           • 已有内容时再拖入文件 = 自动新增一页<br/>
           • 顶部标签可随时切换 / 关闭多个页面<br/>
           • 点「✏️ 编辑」可直接在右侧显示页里修改内容<br/>
-          • 左右两侧选中文字会自动同步高亮对应内容
+          • 左右两侧选中文字会自动同步高亮对应内容<br/>
+          • 按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 打开搜索，左右两侧同步高亮匹配
         </div>
       </div>
       <article class="markdown-body" id="preview"></article>
@@ -498,7 +522,7 @@
       '<div class="toolbar">' +
         '<button id="b-edit">✏️ 编辑</button>' +
         '<button id="b-done" style="display:none">✅ 完成编辑</button>' +
-        '<button class="primary" id="b-save">💾 保存文件</button>' +
+        '<button class="primary" id="b-save">📥 导出 HTML</button>' +
         '<span id="msg"></span>' +
         '<button id="b-print">🖨️ 打印</button>' +
       '</div>' +
@@ -511,9 +535,12 @@
         'var saveBtn=document.getElementById("b-save");' +
         'var printBtn=document.getElementById("b-print");' +
         'var msgEl=document.getElementById("msg");' +
+        'var dirty=false;' +
         'function setMsg(t){msgEl.textContent=t;setTimeout(function(){msgEl.textContent=""},3000);}' +
+        'function markDirty(){dirty=true;}' +
         'editBtn.addEventListener("click",function(){content.contentEditable="true";content.focus();editBtn.style.display="none";doneBtn.style.display="inline-block";});' +
         'doneBtn.addEventListener("click",function(){content.contentEditable="false";doneBtn.style.display="none";editBtn.style.display="inline-block";});' +
+        'content.addEventListener("input",markDirty);' +
         'printBtn.addEventListener("click",function(){window.print();});' +
         'saveBtn.addEventListener("click",function(){' +
           'var html="<!DOCTYPE html>"+document.documentElement.outerHTML;' +
@@ -522,10 +549,14 @@
           'var a=document.createElement("a");' +
           'a.href=url;a.download="' + safeTitle + '.html";a.click();' +
           'URL.revokeObjectURL(url);' +
-          'setMsg("已保存到下载文件夹");' +
+          'dirty=false;' +
+          'setMsg("已导出当前编辑后的 HTML");' +
         '});' +
         'document.addEventListener("keydown",function(e){' +
           'if((e.ctrlKey||e.metaKey)&&e.key==="s"){e.preventDefault();saveBtn.click();}' +
+        '});' +
+        'window.addEventListener("beforeunload",function(e){' +
+          'if(dirty){e.preventDefault();e.returnValue="";}' +
         '});' +
       '})();' +
       '<\/script></body></html>';
@@ -889,7 +920,7 @@
   // Editor → Preview：用 mouseup + keyup 直接读取 textarea 选区（selectionchange 在 textarea 上不可靠）
   function syncEditorToPreview() {
     var start = editor.selectionStart, end = editor.selectionEnd;
-    if (start === end) return;
+    if (start === end) { clearHl(); return; }
     var text = editor.value.substring(start, end);
     if (!text || text.length < 2) return;
     clearTimeout(selTimer);
@@ -897,9 +928,18 @@
   }
   editor.addEventListener("mouseup", syncEditorToPreview);
   editor.addEventListener("keyup", function (e) {
-    if (e.shiftKey && /^(Arrow|Home|End|Page)/.test(e.key)) syncEditorToPreview();
+    // Shift+方向键 / Home/End/Page、Ctrl+A 等选区变化操作都触发同步
+    if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+      syncEditorToPreview(); return;
+    }
+    if (/^(Arrow|Home|End|Page)/.test(e.key) && (e.shiftKey || editor.selectionStart !== editor.selectionEnd)) {
+      syncEditorToPreview();
+    }
   });
-  editor.addEventListener("click", function () { clearTimeout(selTimer); clearHl(); });
+  editor.addEventListener("click", function () {
+    // 点击未形成选区时才清除高亮；如果已有选区，由 mouseup 处理
+    if (editor.selectionStart === editor.selectionEnd) { clearTimeout(selTimer); clearHl(); }
+  });
 
   // Preview → Editor：用 selectionchange（普通 DOM 行为稳定）
   var syncingFromPreview = false;
@@ -917,6 +957,204 @@
       selectInEditor(text);
       setTimeout(function () { syncingFromPreview = false; }, 50);
     }, 60);
+  });
+
+  // ---------- 搜索 ----------
+  var searchbar = document.getElementById("searchbar");
+  var searchInput = document.getElementById("search-input");
+  var searchPrev = document.getElementById("search-prev");
+  var searchNext = document.getElementById("search-next");
+  var searchClose = document.getElementById("search-close");
+  var searchCount = document.getElementById("search-count");
+  var searchMatches = []; // { rootIdx, start, end, text }
+  var searchIndex = -1;
+  var searchHlClass = "sync-hl search-hl";
+
+  function clearSearch() {
+    clearHl();
+    searchMatches = [];
+    searchIndex = -1;
+    searchCount.textContent = "";
+  }
+
+  // 收集 root 下所有文本节点的连续文本，返回 {nodes:[], full:""}
+  function collectTextNodes(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var nodes = [], n, full = "";
+    while ((n = walker.nextNode())) {
+      nodes.push({ node: n, start: full.length });
+      full += n.textContent;
+    }
+    nodes.forEach(function(m, i) { m.end = (i + 1 < nodes.length ? nodes[i + 1].start : full.length); });
+    return { nodes: nodes, full: full };
+  }
+
+  // 高亮 preview 中所有匹配，并记录匹配列表
+  function highlightPreviewMatches(term) {
+    // 清除旧高亮
+    var old = preview.querySelectorAll(".sync-hl");
+    for (var i = old.length - 1; i >= 0; i--) {
+      var el = old[i], parent = el.parentNode;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      parent.removeChild(el);
+    }
+    searchMatches = [];
+    if (!term) return;
+    var t = collectTextNodes(preview);
+    var re = new RegExp(escapeRegExp(term), "gi");
+    var m;
+    while ((m = re.exec(t.full)) !== null) {
+      searchMatches.push({ preview: true, start: m.index, end: m.index + m[0].length, text: m[0] });
+    }
+    // 从后往前包裹，避免偏移错位
+    for (var i = searchMatches.length - 1; i >= 0; i--) {
+      var match = searchMatches[i];
+      var range = document.createRange();
+      var s = atTextPos(t.nodes, match.start), e = atTextPos(t.nodes, match.end);
+      range.setStart(s.node, s.off); range.setEnd(e.node, e.off);
+      try {
+        var sp = document.createElement("span");
+        sp.className = searchHlClass;
+        range.surroundContents(sp);
+      } catch (ex) {
+        // 跨元素时跳过单个大范围包裹，改为逐节点高亮
+        highlightRangeFragments(range, "sync-hl search-hl");
+      }
+    }
+  }
+
+  function atTextPos(nodes, pos) {
+    for (var i = 0; i < nodes.length; i++) {
+      if (pos <= nodes[i].end) return { node: nodes[i].node, off: pos - nodes[i].start };
+    }
+    var last = nodes[nodes.length - 1];
+    return { node: last.node, off: last.node.textContent.length };
+  }
+
+  // 增强版 highlightRangeFragments：可指定 className
+  function highlightRangeFragments(range, className) {
+    className = className || "sync-hl";
+    var startC = range.startContainer, startO = range.startOffset;
+    var endC = range.endContainer, endO = range.endOffset;
+    var ca = range.commonAncestorContainer;
+    var root = (ca.nodeType === 3) ? ca.parentNode : ca;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var inRange = false, node;
+    var fragments = [];
+    while ((node = walker.nextNode())) {
+      if (!inRange && node === startC) inRange = true;
+      if (inRange) {
+        var s = (node === startC) ? startO : 0;
+        var e = (node === endC) ? endO : node.textContent.length;
+        if (e > s) fragments.push({ node: node, start: s, end: e });
+      }
+      if (node === endC) break;
+    }
+    for (var i = fragments.length - 1; i >= 0; i--) {
+      var f = fragments[i];
+      var r2 = document.createRange();
+      r2.setStart(f.node, f.start); r2.setEnd(f.node, f.end);
+      var sp = document.createElement("span");
+      sp.className = className;
+      r2.surroundContents(sp);
+    }
+  }
+
+  // 在 editor 中查找所有匹配位置
+  function findEditorMatches(term) {
+    var matches = [];
+    if (!term) return matches;
+    var src = editor.value;
+    var re = new RegExp(escapeRegExp(term), "gi");
+    var m;
+    while ((m = re.exec(src)) !== null) {
+      matches.push({ preview: false, start: m.index, end: m.index + m[0].length, text: m[0] });
+    }
+    return matches;
+  }
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // 合并搜索匹配并按预览优先排序（实际只需一个索引同步两边）
+  function doSearch(term) {
+    clearSearch();
+    if (!term || term.length < 1) { searchCount.textContent = ""; return; }
+    highlightPreviewMatches(term);
+    var editorMatches = findEditorMatches(term);
+    // 合并：预览匹配在前，编辑器匹配在后，通过同一个 index 同步
+    searchMatches = searchMatches.concat(editorMatches);
+    searchIndex = searchMatches.length ? 0 : -1;
+    updateSearchUI();
+    goToSearchMatch(0);
+  }
+
+  function updateSearchUI() {
+    if (!searchMatches.length) {
+      searchCount.textContent = searchInput.value ? "无匹配" : "";
+      return;
+    }
+    searchCount.textContent = (searchIndex + 1) + " / " + searchMatches.length;
+  }
+
+  function scrollEditorToMatch(match) {
+    editor.focus();
+    editor.setSelectionRange(match.start, match.end);
+    var linesBefore = editor.value.substring(0, match.start).split("\n").length;
+    var lineHeight = parseInt(getComputedStyle(editor).lineHeight) || 22;
+    editor.scrollTop = Math.max(0, linesBefore * lineHeight - editor.clientHeight / 2);
+  }
+
+  function goToSearchMatch(idx) {
+    if (!searchMatches.length) return;
+    searchIndex = (idx + searchMatches.length) % searchMatches.length;
+    updateSearchUI();
+    var match = searchMatches[searchIndex];
+    if (match.preview) {
+      // 预览区高亮已存在，只需滚动当前高亮到视野
+      var spans = preview.querySelectorAll(".search-hl");
+      if (spans[searchIndex]) {
+        spans[searchIndex].scrollIntoView({ block: "center", behavior: "smooth" });
+        // 同时把 editor 也滚动到对应文本位置（取相同文本第一次出现）
+        var em = findEditorMatches(searchInput.value)[0];
+        if (em) scrollEditorToMatch(em);
+      }
+    } else {
+      // 编辑器匹配：编辑器选中，并滚动预览区第一个高亮到视野
+      scrollEditorToMatch(match);
+      var firstSpan = preview.querySelector(".search-hl");
+      if (firstSpan) firstSpan.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  function openSearch() {
+    searchbar.classList.add("show");
+    searchInput.focus();
+    searchInput.select();
+    if (searchInput.value) doSearch(searchInput.value);
+  }
+  function closeSearch() {
+    searchbar.classList.remove("show");
+    clearSearch();
+    editor.focus();
+  }
+
+  document.getElementById("btn-search").addEventListener("click", openSearch);
+  searchClose.addEventListener("click", closeSearch);
+  searchInput.addEventListener("input", function () { doSearch(this.value); });
+  searchPrev.addEventListener("click", function () { goToSearchMatch(searchIndex - 1); });
+  searchNext.addEventListener("click", function () { goToSearchMatch(searchIndex + 1); });
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      e.preventDefault();
+      openSearch();
+    }
+    if (e.key === "Escape" && searchbar.classList.contains("show")) {
+      e.preventDefault();
+      closeSearch();
+    }
   });
 
   // ---------- 启动 ----------
