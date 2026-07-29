@@ -224,7 +224,7 @@
     top: -11px; left: 50%; transform: translateX(-50%);
   }
   .table-ctx-menu {
-    position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
+    position: fixed; z-index: 60; display: none; flex-direction: column; gap: 2px;
     background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 4px; box-shadow: var(--shadow); backdrop-filter: saturate(180%) blur(8px);
     min-width: 120px;
@@ -869,20 +869,17 @@
     e.stopPropagation();
     const cell = h.parentNode;
     const rect = h.getBoundingClientRect();
-    const pr = document.getElementById("pane-preview").getBoundingClientRect();
-    const x = rect.left - pr.left + document.getElementById("pane-preview").scrollLeft;
-    const y = rect.top - pr.top + document.getElementById("pane-preview").scrollTop;
 
     if (h.classList.contains("table-row-handle")) {
       activeCell = cell;
-      showMenu(x + 24, y, [
+      showMenu(rect.right, rect.top, [
         { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
         { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
         { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
       ]);
     } else {
       activeCell = cell;
-      showMenu(x, y + 24, [
+      showMenu(rect.left, rect.bottom, [
         { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
         { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
         { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
