@@ -203,31 +203,28 @@
   .sync-hl.fade { background: transparent !important; }
 
   /* ---------- 表格编辑手柄（飞书式边缘手柄） ---------- */
-  .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: hidden; }
+  .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: visible; }
   .table-handle {
     position: absolute; pointer-events: auto; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    opacity: 0; transition: opacity .15s;
+    opacity: 1; transition: opacity .15s;
   }
-  .table-handle:hover, .table-handle.active { opacity: 1; }
+  .table-handle:hover, .table-handle.active { transform: scale(1.1); }
   .table-handle-dot {
-    width: 14px; height: 14px; border-radius: 50%;
-    background: var(--border); color: var(--muted); font-size: 12px; line-height: 14px;
-    text-align: center; transition: all .15s;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 13px; line-height: 18px;
+    text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    display: flex; align-items: center; justify-content: center;
   }
-  .table-handle:hover .table-handle-dot, .table-handle.active .table-handle-dot {
-    background: var(--accent); color: #fff; transform: scale(1.15);
-  }
+  .table-handle-dot::before { content: "+"; }
   .table-row-handle {
-    left: 4px; width: 20px;
+    left: 4px; width: 24px;
   }
-  .table-row-handle .table-handle-dot::before { content: "•"; }
-  .table-row-handle:hover .table-handle-dot::before { content: "+"; font-size: 13px; }
+  .table-row-handle .table-handle-dot::before { content: "+"; }
   .table-col-handle {
-    top: 4px; height: 20px;
+    top: 4px; height: 24px;
   }
-  .table-col-handle .table-handle-dot::before { content: "•"; }
-  .table-col-handle:hover .table-handle-dot::before { content: "+"; font-size: 13px; }
+  .table-col-handle .table-handle-dot::before { content: "+"; }
   .table-ctx-menu {
     position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
     background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 8px;
@@ -853,7 +850,7 @@
       const h = document.createElement("div");
       h.className = "table-handle table-row-handle";
       h.style.top = (rect.top - paneRect.top + scrollTop) + "px";
-      h.style.left = (tableRect.left - paneRect.left + scrollLeft - 10) + "px";
+      h.style.left = (tableRect.left - paneRect.left + scrollLeft - 24) + "px";
       h.style.height = rect.height + "px";
       h.title = "行操作";
       h.innerHTML = '<span class="table-handle-dot"></span>';
@@ -882,8 +879,8 @@
         const rect = cell.getBoundingClientRect();
         const h = document.createElement("div");
         h.className = "table-handle table-col-handle";
-        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 7) + "px";
-        h.style.top = (tableRect.top - paneRect.top + scrollTop - 10) + "px";
+        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 9) + "px";
+        h.style.top = (tableRect.top - paneRect.top + scrollTop - 24) + "px";
         h.style.width = rect.width + "px";
         h.title = "列操作";
         h.innerHTML = '<span class="table-handle-dot"></span>';
