@@ -202,29 +202,26 @@
   .sync-hl { background: #ffeb3b !important; color: inherit !important; border-radius: 3px; padding: 0 2px; transition: background .4s ease-out; }
   .sync-hl.fade { background: transparent !important; }
 
-  /* ---------- 表格编辑手柄（飞书式边缘手柄） ---------- */
+  /* ---------- 表格编辑手柄（始终可见的醒目按钮） ---------- */
   .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: visible; }
   .table-handle {
     position: absolute; pointer-events: auto; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    opacity: 1; transition: opacity .15s;
+    opacity: 1;
+    width: 26px; height: 26px;
+    background: var(--accent); color: #fff; border-radius: 6px;
+    font-size: 18px; font-weight: 700; line-height: 1;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+    border: 2px solid #fff;
   }
-  .table-handle:hover, .table-handle.active { transform: scale(1.1); }
-  .table-handle-dot {
-    width: 18px; height: 18px; border-radius: 50%;
-    background: var(--accent); color: #fff; font-size: 13px; line-height: 18px;
-    text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.2);
-    display: flex; align-items: center; justify-content: center;
-  }
-  .table-handle-dot::before { content: "+"; }
+  .table-handle:hover { transform: scale(1.12); filter: brightness(1.1); }
+  .table-handle::before { content: "+"; }
   .table-row-handle {
-    left: 4px; width: 24px;
+    left: 4px;
   }
-  .table-row-handle .table-handle-dot::before { content: "+"; }
   .table-col-handle {
-    top: 4px; height: 24px;
+    top: 4px;
   }
-  .table-col-handle .table-handle-dot::before { content: "+"; }
   .table-ctx-menu {
     position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
     background: var(--toolbar-bg); border: 1px solid var(--border); border-radius: 8px;
@@ -367,6 +364,7 @@
     // 预览区始终可编辑；代码块保持锁定，防止结构被破坏
     preview.setAttribute("contenteditable", "true");
     preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
+    positionAllHandles();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
@@ -835,94 +833,80 @@
     ctxMenu.classList.add("show");
   }
 
-  function positionHandles(table) {
-    activeTable = table;
+  function positionAllHandles() {
     handleLayer.innerHTML = "";
-    const paneRect = document.getElementById("pane-preview").getBoundingClientRect();
-    const tableRect = table.getBoundingClientRect();
-    const scrollLeft = document.getElementById("pane-preview").scrollLeft;
-    const scrollTop = document.getElementById("pane-preview").scrollTop;
+    const tables = preview.querySelectorAll("table");
+    if (!tables.length) return;
+    const pane = document.getElementById("pane-preview");
+    const paneRect = pane.getBoundingClientRect();
+    const scrollLeft = pane.scrollLeft;
+    const scrollTop = pane.scrollTop;
 
-    // 行手柄（左侧）
-    const rows = table.querySelectorAll("tr");
-    rows.forEach(function (row, i) {
-      const rect = row.getBoundingClientRect();
-      const h = document.createElement("div");
-      h.className = "table-handle table-row-handle";
-      h.style.top = (rect.top - paneRect.top + scrollTop) + "px";
-      h.style.left = (tableRect.left - paneRect.left + scrollLeft - 24) + "px";
-      h.style.height = rect.height + "px";
-      h.title = "行操作";
-      h.innerHTML = '<span class="table-handle-dot"></span>';
-      h.addEventListener("click", function (e) {
-        e.stopPropagation();
-        activeCell = row.children[0];
-        document.querySelectorAll(".table-handle.active").forEach(function (x) { x.classList.remove("active"); });
-        h.classList.add("active");
-        const hr = h.getBoundingClientRect();
-        const pr = handleLayer.getBoundingClientRect();
-        showMenu(hr.right - pr.left, hr.top - pr.top, [
-          { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
-          { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
-          { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
-        ]);
-      });
-      handleLayer.appendChild(h);
-    });
+    tables.forEach(function (table) {
+      const tableRect = table.getBoundingClientRect();
+      const baseLeft = tableRect.left - paneRect.left + scrollLeft;
+      const baseTop = tableRect.top - paneRect.top + scrollTop;
+      const rows = table.querySelectorAll("tr");
 
-    // 列手柄（上方）
-    const firstRow = rows[0];
-    if (firstRow) {
-      const cells = firstRow.children;
-      for (var i = 0; i < cells.length; i++) {
-        const cell = cells[i];
-        const rect = cell.getBoundingClientRect();
+      // 行手柄（左侧，每行一个，垂直居中）
+      rows.forEach(function (row) {
+        const rect = row.getBoundingClientRect();
         const h = document.createElement("div");
-        h.className = "table-handle table-col-handle";
-        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 9) + "px";
-        h.style.top = (tableRect.top - paneRect.top + scrollTop - 24) + "px";
-        h.style.width = rect.width + "px";
-        h.title = "列操作";
-        h.innerHTML = '<span class="table-handle-dot"></span>';
+        h.className = "table-handle table-row-handle";
+        h.style.top = (rect.top - paneRect.top + scrollTop + rect.height / 2 - 13) + "px";
+        h.style.left = (baseLeft - 32) + "px";
+        h.title = "行操作";
         h.addEventListener("click", function (e) {
           e.stopPropagation();
-          activeCell = cell;
-          document.querySelectorAll(".table-handle.active").forEach(function (x) { x.classList.remove("active"); });
-          h.classList.add("active");
+          activeCell = row.children[0];
           const hr = h.getBoundingClientRect();
           const pr = handleLayer.getBoundingClientRect();
-          showMenu(hr.left - pr.left, hr.bottom - pr.top, [
-            { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
-            { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
-            { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
+          showMenu(hr.right - pr.left, hr.top - pr.top, [
+            { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
+            { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
+            { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
           ]);
         });
         handleLayer.appendChild(h);
+      });
+
+      // 列手柄（上方，每列一个，水平居中）
+      const firstRow = rows[0];
+      if (firstRow) {
+        const cells = firstRow.children;
+        for (var i = 0; i < cells.length; i++) {
+          const cell = cells[i];
+          const rect = cell.getBoundingClientRect();
+          const h = document.createElement("div");
+          h.className = "table-handle table-col-handle";
+          h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 13) + "px";
+          h.style.top = (baseTop - 32) + "px";
+          h.title = "列操作";
+          h.addEventListener("click", function (e) {
+            e.stopPropagation();
+            activeCell = cell;
+            const hr = h.getBoundingClientRect();
+            const pr = handleLayer.getBoundingClientRect();
+            showMenu(hr.left - pr.left, hr.bottom - pr.top, [
+              { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
+              { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
+              { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
+            ]);
+          });
+          handleLayer.appendChild(h);
+        }
       }
-    }
+    });
   }
 
-  // 鼠标进入表格时显示手柄，离开时延迟隐藏
-  preview.addEventListener("mouseover", function (e) {
-    const table = e.target.closest && e.target.closest("table");
-    if (table && preview.contains(table)) {
-      if (activeTable !== table) positionHandles(table);
-      clearTimeout(hideTimer);
-    }
+  // 窗口大小变化时重新定位
+  let resizeT;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(positionAllHandles, 150);
   });
-  preview.addEventListener("mouseout", function (e) {
-    const table = e.target.closest && e.target.closest("table");
-    if (table) {
-      hideTimer = setTimeout(function () {
-        if (!handleLayer.matches(":hover") && !ctxMenu.matches(":hover")) { hideHandles(); hideMenu(); }
-      }, 200);
-    }
-  });
-  handleLayer.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
-  handleLayer.addEventListener("mouseleave", function () { hideTimer = setTimeout(hideHandles, 200); });
-  ctxMenu.addEventListener("mouseleave", function () { hideMenu(); hideHandles(); });
 
-  // 点击非手柄/菜单区域关闭
+  // 点击非菜单区域关闭菜单
   document.addEventListener("click", function (e) {
     if (!e.target.closest(".table-handle") && !e.target.closest(".table-ctx-menu")) {
       hideMenu();
