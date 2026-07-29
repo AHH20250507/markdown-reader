@@ -202,26 +202,26 @@
   .sync-hl { background: #ffeb3b !important; color: inherit !important; border-radius: 3px; padding: 0 2px; transition: background .4s ease-out; }
   .sync-hl.fade { background: transparent !important; }
 
-  /* ---------- 表格编辑手柄（悬停表格时显示，固定在表格边框上） ---------- */
-  .table-handle-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: visible; }
-  .table-handle {
-    position: absolute; pointer-events: auto; cursor: pointer;
+  /* ---------- 表格编辑手柄（内嵌在单元格里，悬停表格时显示） ---------- */
+  .markdown-body table { position: relative; }
+  .markdown-body td, .markdown-body th { position: relative; }
+  .table-edit-handle {
+    position: absolute; z-index: 10; cursor: pointer;
+    width: 22px; height: 22px;
+    background: var(--accent); color: #fff; border-radius: 5px;
     display: flex; align-items: center; justify-content: center;
-    opacity: 0; transition: opacity .12s, transform .12s;
-    width: 28px; height: 28px;
-    background: var(--accent); color: #fff; border-radius: 6px;
-    font-size: 20px; font-weight: 700; line-height: 1;
-    box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    border: 2px solid #fff;
+    font-size: 14px; font-weight: 700; line-height: 1;
+    box-shadow: 0 1px 5px rgba(0,0,0,.25);
+    opacity: 0; transition: opacity .15s, transform .12s;
+    pointer-events: auto;
   }
-  .table-handle.show { opacity: 1; }
-  .table-handle:hover { transform: scale(1.15); filter: brightness(1.12); }
-  .table-handle::before { content: "+"; }
+  .markdown-body table:hover .table-edit-handle { opacity: 1; }
+  .table-edit-handle:hover { transform: scale(1.15); filter: brightness(1.1); }
   .table-row-handle {
-    margin-left: -14px; /* 让手柄中心压在表格左边框上 */
+    left: -11px; top: 50%; transform: translateY(-50%);
   }
   .table-col-handle {
-    margin-top: -14px; /* 让手柄中心压在表格上边框上 */
+    top: -11px; left: 50%; transform: translateX(-50%);
   }
   .table-ctx-menu {
     position: absolute; z-index: 60; display: none; flex-direction: column; gap: 2px;
@@ -299,7 +299,6 @@
     <div class="inner">📄 松开以加载（已有内容将自动新增一页）</div>
   </div>
 
-  <div class="table-handle-layer" id="table-handle-layer"></div>
   <div class="table-ctx-menu" id="table-ctx-menu"></div>
 
 <script>
@@ -365,7 +364,7 @@
     // 预览区始终可编辑；代码块保持锁定，防止结构被破坏
     preview.setAttribute("contenteditable", "true");
     preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
-    hideHandles();
+    injectTableHandles();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
@@ -627,6 +626,7 @@
       node.childNodes.forEach(function (n) {
         if (n.nodeType === 3) { out += n.textContent; return; }
         if (n.nodeType !== 1) return;
+        if (n.classList && n.classList.contains("table-edit-handle")) return;
         const tag = n.tagName.toLowerCase();
         const txt = inline(n);
         if (tag === "strong" || tag === "b") out += "**" + txt + "**";
@@ -676,6 +676,7 @@
           return;
         }
         if (n.nodeType !== 1) return;
+        if (n.classList && n.classList.contains("table-edit-handle")) return;
         const tag = n.tagName.toLowerCase();
         if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
           const lvl = parseInt(tag[1], 10);
@@ -731,10 +732,9 @@
     }, 400);
   });
 
-  // ---------- 表格增删行列：飞书式边缘手柄 ----------
-  const handleLayer = document.getElementById("table-handle-layer");
+  // ---------- 表格增删行列：内嵌单元格手柄 ----------
   const ctxMenu = document.getElementById("table-ctx-menu");
-  let activeTable = null, activeCell = null, hideTimer = null;
+  let activeCell = null;
 
   function afterTableChange() {
     const md = htmlToMarkdown(preview);
@@ -806,15 +806,9 @@
     afterTableChange();
   }
 
-  function hideHandles() {
-    handleLayer.innerHTML = "";
-    activeTable = null;
-  }
-
   function hideMenu() {
     ctxMenu.classList.remove("show");
     activeCell = null;
-    document.querySelectorAll(".table-handle.active").forEach(function (h) { h.classList.remove("active"); });
   }
 
   function showMenu(x, y, items) {
@@ -834,103 +828,71 @@
     ctxMenu.classList.add("show");
   }
 
-  function positionHandlesForTable(table) {
-    activeTable = table;
-    handleLayer.innerHTML = "";
-    const pane = document.getElementById("pane-preview");
-    const paneRect = pane.getBoundingClientRect();
-    const scrollLeft = pane.scrollLeft;
-    const scrollTop = pane.scrollTop;
-    const tableRect = table.getBoundingClientRect();
-    const baseLeft = tableRect.left - paneRect.left + scrollLeft;
-    const baseTop = tableRect.top - paneRect.top + scrollTop;
-    const rows = table.querySelectorAll("tr");
+  // 将手柄直接注入表格 DOM 内，随表格一起滚动/移动
+  function injectTableHandles() {
+    preview.querySelectorAll("table").forEach(function (table) {
+      const rows = table.querySelectorAll("tr");
+      if (!rows.length) return;
 
-    // 行手柄（左侧，每行一个，垂直居中，中心压在表格左边框）
-    rows.forEach(function (row) {
-      const rect = row.getBoundingClientRect();
-      // 跳过完全不可见的行
-      if (rect.bottom < paneRect.top || rect.top > paneRect.bottom) return;
-      const h = document.createElement("div");
-      h.className = "table-handle table-row-handle show";
-      h.style.top = (rect.top - paneRect.top + scrollTop + rect.height / 2 - 14) + "px";
-      h.style.left = baseLeft + "px";
-      h.title = "行操作";
-      h.addEventListener("click", function (e) {
-        e.stopPropagation();
-        activeCell = row.children[0];
-        const hr = h.getBoundingClientRect();
-        const pr = handleLayer.getBoundingClientRect();
-        showMenu(hr.right - pr.left, hr.top - pr.top, [
-          { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
-          { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
-          { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
-        ]);
+      // 每行第一个单元格注入行手柄
+      rows.forEach(function (row) {
+        const firstCell = row.querySelector("td, th");
+        if (!firstCell || firstCell.querySelector(".table-row-handle")) return;
+        const h = document.createElement("span");
+        h.className = "table-edit-handle table-row-handle";
+        h.setAttribute("data-handle", "row");
+        h.title = "行操作";
+        h.textContent = "+";
+        firstCell.appendChild(h);
       });
-      handleLayer.appendChild(h);
-    });
 
-    // 列手柄（上方，每列一个，水平居中，中心压在表格上边框）
-    const firstRow = rows[0];
-    if (firstRow) {
-      const cells = firstRow.children;
-      for (var i = 0; i < cells.length; i++) {
-        const cell = cells[i];
-        const rect = cell.getBoundingClientRect();
-        if (rect.right < paneRect.left || rect.left > paneRect.right) return;
-        const h = document.createElement("div");
-        h.className = "table-handle table-col-handle show";
-        h.style.left = (rect.left - paneRect.left + scrollLeft + rect.width / 2 - 14) + "px";
-        h.style.top = baseTop + "px";
-        h.title = "列操作";
-        h.addEventListener("click", function (e) {
-          e.stopPropagation();
-          activeCell = cell;
-          const hr = h.getBoundingClientRect();
-          const pr = handleLayer.getBoundingClientRect();
-          showMenu(hr.left - pr.left, hr.bottom - pr.top, [
-            { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
-            { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
-            { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
-          ]);
+      // 首行每个单元格注入列手柄
+      const firstRow = rows[0];
+      if (firstRow) {
+        Array.prototype.forEach.call(firstRow.children, function (cell) {
+          if (cell.querySelector(".table-col-handle")) return;
+          const h = document.createElement("span");
+          h.className = "table-edit-handle table-col-handle";
+          h.setAttribute("data-handle", "col");
+          h.title = "列操作";
+          h.textContent = "+";
+          cell.appendChild(h);
         });
-        handleLayer.appendChild(h);
       }
-    }
+    });
   }
 
-  // 鼠标进入表格时显示该表格手柄；离开时隐藏
-  preview.addEventListener("mouseover", function (e) {
-    const table = e.target.closest && e.target.closest("table");
-    if (table && preview.contains(table)) {
-      if (activeTable !== table) positionHandlesForTable(table);
-      clearTimeout(hideTimer);
+  // 点击表格手柄时弹出菜单（事件委托）
+  preview.addEventListener("click", function (e) {
+    const h = e.target.closest && e.target.closest(".table-edit-handle");
+    if (!h) return;
+    e.stopPropagation();
+    const cell = h.parentNode;
+    const rect = h.getBoundingClientRect();
+    const pr = document.getElementById("pane-preview").getBoundingClientRect();
+    const x = rect.left - pr.left + document.getElementById("pane-preview").scrollLeft;
+    const y = rect.top - pr.top + document.getElementById("pane-preview").scrollTop;
+
+    if (h.classList.contains("table-row-handle")) {
+      activeCell = cell;
+      showMenu(x + 24, y, [
+        { label: "➕ 上方插入行", action: function () { insertRow(activeCell, false); } },
+        { label: "➕ 下方插入行", action: function () { insertRow(activeCell, true); } },
+        { label: "❌ 删除行", danger: true, action: function () { deleteRow(activeCell); } }
+      ]);
+    } else {
+      activeCell = cell;
+      showMenu(x, y + 24, [
+        { label: "➕ 左侧插入列", action: function () { insertCol(activeCell, false); } },
+        { label: "➕ 右侧插入列", action: function () { insertCol(activeCell, true); } },
+        { label: "❌ 删除列", danger: true, action: function () { deleteCol(activeCell); } }
+      ]);
     }
   });
-  preview.addEventListener("mouseout", function (e) {
-    const table = e.target.closest && e.target.closest("table");
-    if (table) {
-      hideTimer = setTimeout(function () {
-        if (!handleLayer.matches(":hover") && !ctxMenu.matches(":hover")) { hideHandles(); hideMenu(); }
-      }, 250);
-    }
-  });
-  handleLayer.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
-  handleLayer.addEventListener("mouseleave", function () { hideTimer = setTimeout(hideHandles, 250); });
-  ctxMenu.addEventListener("mouseleave", function () { hideMenu(); hideHandles(); });
 
-  // 窗口大小变化时若正显示手柄则重绘
-  let resizeT;
-  window.addEventListener("resize", function () {
-    clearTimeout(resizeT);
-    resizeT = setTimeout(function () {
-      if (activeTable && preview.contains(activeTable)) positionHandlesForTable(activeTable);
-    }, 150);
-  });
-
-  // 点击非手柄/菜单区域关闭菜单
+  // 点击非菜单区域关闭菜单
   document.addEventListener("click", function (e) {
-    if (!e.target.closest(".table-handle") && !e.target.closest(".table-ctx-menu")) {
+    if (!e.target.closest(".table-edit-handle") && !e.target.closest(".table-ctx-menu")) {
       hideMenu();
     }
   });
