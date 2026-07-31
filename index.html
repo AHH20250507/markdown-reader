@@ -187,6 +187,17 @@
   }
   .markdown-body .img-load-prompt:hover { border-color: var(--accent); color: var(--accent); }
   .markdown-body .img-broken { display: inline-block; min-width: 120px; min-height: 80px; background: var(--bg-soft); border: 1px dashed var(--border); border-radius: 8px; }
+  .img-load-banner {
+    margin: 0 0 16px; padding: 12px 16px;
+    background: var(--accent-soft); border: 1px dashed var(--accent);
+    border-radius: 8px; color: var(--fg); font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .img-load-banner:hover { filter: brightness(.97); }
+  .img-load-banner kbd {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 2px 6px; font-size: 12px;
+  }
   .markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: .8em 0; }
   .markdown-body li { margin: .35em 0; }
   .markdown-body blockquote { margin: 1em 0; padding: .4em 1.1em; color: var(--quote-fg); border-left: 4px solid var(--quote-border); background: var(--bg-soft); border-radius: 0 8px 8px 0; }
@@ -409,6 +420,7 @@
     preview.setAttribute("contenteditable", "true");
     preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
     attachImages();
+    showImageLoadBanner();
     injectTableHandles();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
@@ -475,6 +487,24 @@
       const f = files[i];
       if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name)) registerImageFile(f);
     }
+  }
+
+  function showImageLoadBanner() {
+    const imgs = preview.querySelectorAll("img[data-original-src]");
+    const missing = [];
+    imgs.forEach(function (img) {
+      const src = img.getAttribute("data-original-src") || "";
+      if (!isRemoteUrl(src) && !imageMap.has(normalizeImgKey(src))) missing.push(filenameFromPath(src));
+    });
+    if (!missing.length) return;
+    const banner = document.createElement("div");
+    banner.className = "img-load-banner";
+    banner.setAttribute("contenteditable", "false");
+    banner.innerHTML = "🖼️ 检测到 <strong>" + missing.length + "</strong> 张本地图片未加载：" +
+      escapeHtml(missing.slice(0, 3).join("、")) + (missing.length > 3 ? " 等" : "") +
+      "，<u>点击此处选择图片所在的文件夹</u>（或把图片文件一起拖进来）";
+    banner.addEventListener("click", function () { document.getElementById("img-dir-input").click(); });
+    preview.insertBefore(banner, preview.firstChild);
   }
 
   function blobToDataUrl(blob) {
@@ -871,7 +901,7 @@
       node.childNodes.forEach(function (n) {
         if (n.nodeType === 3) { out += n.textContent; return; }
         if (n.nodeType !== 1) return;
-        if (n.classList && n.classList.contains("table-edit-handle")) return;
+        if (n.classList && (n.classList.contains("table-edit-handle") || n.classList.contains("img-load-banner"))) return;
         const tag = n.tagName.toLowerCase();
         const txt = inline(n);
         if (tag === "strong" || tag === "b") out += "**" + txt + "**";
