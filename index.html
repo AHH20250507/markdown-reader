@@ -179,6 +179,14 @@
   .markdown-body a { color: var(--accent); text-decoration: none; }
   .markdown-body a:hover { text-decoration: underline; }
   .markdown-body img { max-width: 100%; border-radius: 8px; }
+  .markdown-body .img-load-prompt {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border: 1px dashed var(--border); border-radius: 8px;
+    background: var(--bg-soft); color: var(--muted); font-size: 13px; cursor: pointer;
+    margin: .5em 0;
+  }
+  .markdown-body .img-load-prompt:hover { border-color: var(--accent); color: var(--accent); }
+  .markdown-body .img-broken { display: inline-block; min-width: 120px; min-height: 80px; background: var(--bg-soft); border: 1px dashed var(--border); border-radius: 8px; }
   .markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: .8em 0; }
   .markdown-body li { margin: .35em 0; }
   .markdown-body blockquote { margin: 1em 0; padding: .4em 1.1em; color: var(--quote-fg); border-left: 4px solid var(--quote-border); background: var(--bg-soft); border-radius: 0 8px 8px 0; }
@@ -258,9 +266,12 @@
     <button class="btn" id="btn-copy">复制 MD</button>
     <button class="btn" id="btn-export-md">导出 MD</button>
     <button class="btn" id="btn-export">导出 HTML</button>
+    <button class="btn" id="btn-load-img">🖼️ 加载图片</button>
     <div class="spacer"></div>
     <span class="meta" id="meta">就绪</span>
     <input type="file" id="file-input" accept=".md,.markdown,.txt,text/markdown,text/plain" class="hidden" />
+    <input type="file" id="img-input" accept="image/*" multiple class="hidden" />
+    <input type="file" id="img-dir-input" webkitdirectory directory multiple class="hidden" />
   </div>
 
   <div class="searchbar" id="searchbar">
@@ -288,7 +299,8 @@
           • 顶部标签可随时切换 / 关闭多个页面<br/>
           • 右侧显示页可直接修改文字和表格内容<br/>
           • 左右两侧选中文字会自动同步高亮对应内容<br/>
-          • 按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 打开搜索，左右两侧同步高亮匹配
+          • 按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 打开搜索，左右两侧同步高亮匹配<br/>
+          • 拖入 Markdown 时同时拖入图片文件/文件夹，或点击 🖼️ 加载图片
         </div>
       </div>
       <article class="markdown-body" id="preview"></article>
@@ -314,6 +326,38 @@
   const paneEditor = document.getElementById("pane-editor");
   const tabbar = document.getElementById("tabbar");
   const STORAGE_KEY = "md-reader-pages";
+
+  // ---------- 本地图片映射 ----------
+  // key = 图片文件名（小写），value = object URL / data URL
+  const imageMap = new Map();
+
+  function filenameFromPath(path) {
+    if (!path) return "";
+    return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+  }
+
+  function isRemoteUrl(src) {
+    return /^(https?:|data:|blob:)/i.test(src || "");
+  }
+
+  function normalizeImgKey(name) {
+    return filenameFromPath(name).toLowerCase();
+  }
+
+  function registerImageFile(file) {
+    const key = normalizeImgKey(file.name);
+    if (!key) return;
+    if (imageMap.has(key)) URL.revokeObjectURL(imageMap.get(key));
+    imageMap.set(key, URL.createObjectURL(file));
+  }
+
+  function resolveImageSrc(src) {
+    if (!src) return src;
+    if (isRemoteUrl(src)) return src;
+    const key = normalizeImgKey(src);
+    if (imageMap.has(key)) return imageMap.get(key);
+    return src;
+  }
 
   marked.setOptions({ gfm: true, breaks: false, headerIds: true, mangle: false });
 
@@ -364,10 +408,106 @@
     // 预览区始终可编辑；代码块保持锁定，防止结构被破坏
     preview.setAttribute("contenteditable", "true");
     preview.querySelectorAll("pre, pre code").forEach(function (el) { el.setAttribute("contenteditable", "false"); });
+    attachImages();
     injectTableHandles();
     const chars = raw.replace(/\s/g, "").length;
     const words = (raw.match(/[一-龥]/g) || []).length + (raw.trim().split(/\s+/).filter(Boolean).length);
     meta.textContent = chars + " 字符 · 约 " + Math.max(1, Math.round(words / 300)) + " 分钟阅读";
+  }
+
+  // ---------- 图片加载与提示 ----------
+  function attachImages() {
+    preview.querySelectorAll("img").forEach(function (img) {
+      const originalSrc = img.getAttribute("src") || "";
+      img.setAttribute("data-original-src", originalSrc);
+      const resolved = resolveImageSrc(originalSrc);
+      if (resolved !== originalSrc) img.src = resolved;
+
+      img.onerror = function () {
+        img.classList.add("img-broken");
+        const wrap = document.createElement("span");
+        wrap.className = "img-load-prompt";
+        wrap.title = originalSrc;
+        wrap.innerHTML = "🖼️ 图片无法加载：" + escapeHtml(filenameFromPath(originalSrc)) + "（点击选择本地图片）";
+        wrap.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          promptLoadImage(img, originalSrc);
+        });
+        if (!img.nextSibling) img.parentNode.appendChild(wrap);
+        else img.parentNode.insertBefore(wrap, img.nextSibling);
+      };
+      img.onload = function () { img.classList.remove("img-broken"); };
+    });
+  }
+
+  function promptLoadImage(img, originalSrc) {
+    const input = document.getElementById("img-input");
+    input.onchange = function () {
+      const file = input.files && input.files[0];
+      input.value = "";
+      if (!file) return;
+      registerImageFile(file);
+      const key = normalizeImgKey(originalSrc);
+      // 如果文件名不一致但用户明确为这张图片选了文件，也建立映射
+      if (key && normalizeImgKey(file.name) !== key) imageMap.set(key, imageMap.get(normalizeImgKey(file.name)));
+      const resolved = resolveImageSrc(originalSrc);
+      img.src = resolved;
+      img.classList.remove("img-broken");
+      // 移除提示
+      const prompt = img.nextSibling;
+      if (prompt && prompt.classList && prompt.classList.contains("img-load-prompt")) prompt.parentNode.removeChild(prompt);
+      // 更新 Markdown 中的图片引用（保留原路径，仅渲染层替换）
+      updateMarkdownImageRef(originalSrc, originalSrc);
+      meta.textContent = "已加载图片：" + file.name;
+    };
+    input.click();
+  }
+
+  function updateMarkdownImageRef(oldSrc, newSrc) {
+    // 仅用于触发重渲染和持久化；图片 src 保留原路径，避免污染 Markdown
+    const p = activePage(); if (!p) return;
+    renderPreview(); persist();
+  }
+
+  function loadImagesFromFiles(files) {
+    for (var i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name)) registerImageFile(f);
+    }
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onloadend = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // 将 Markdown 中已加载的本地图片内嵌为 base64，使导出的 HTML 自包含
+  async function inlineLocalImages(md) {
+    const re = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    const matches = [];
+    var m;
+    while ((m = re.exec(md)) !== null) {
+      const src = m[2];
+      if (isRemoteUrl(src)) continue;
+      const key = normalizeImgKey(src);
+      if (imageMap.has(key)) matches.push({ start: m.index, end: m.index + m[0].length, src: src, key: key, alt: m[1] });
+    }
+    var out = md;
+    for (var i = matches.length - 1; i >= 0; i--) {
+      const match = matches[i];
+      try {
+        const resp = await fetch(imageMap.get(match.key));
+        const blob = await resp.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        out = out.substring(0, match.start) + "![" + match.alt + "](" + dataUrl + ")" + out.substring(match.end);
+      } catch (e) {}
+    }
+    return out;
   }
 
   // ---------- 标签栏 ----------
@@ -477,18 +617,121 @@
   document.getElementById("btn-open").addEventListener("click", function () { fileInput.click(); });
   fileInput.addEventListener("change", function (e) { loadFile(e.target.files[0]); e.target.value = ""; });
 
+  const imgInput = document.getElementById("img-input");
+  const imgDirInput = document.getElementById("img-dir-input");
+  document.getElementById("btn-load-img").addEventListener("click", function () {
+    // 优先尝试文件夹选择；不支持则用普通多文件
+    if ("webkitdirectory" in document.createElement("input")) imgDirInput.click();
+    else imgInput.click();
+  });
+  imgInput.addEventListener("change", function (e) {
+    loadImagesFromFiles(e.target.files);
+    e.target.value = "";
+    renderPreview();
+    meta.textContent = "已加载图片 " + imageMap.size + " 张";
+  });
+  imgDirInput.addEventListener("change", function (e) {
+    loadImagesFromFiles(e.target.files);
+    e.target.value = "";
+    renderPreview();
+    meta.textContent = "已加载图片 " + imageMap.size + " 张";
+  });
+
   // ---------- 拖拽 ----------
   let dragDepth = 0;
   window.addEventListener("dragenter", function (e) { e.preventDefault(); dragDepth++; dropOverlay.classList.add("show"); });
   window.addEventListener("dragover", function (e) { e.preventDefault(); });
   window.addEventListener("dragleave", function (e) { e.preventDefault(); dragDepth--; if (dragDepth <= 0) { dragDepth = 0; dropOverlay.classList.remove("show"); } });
-  window.addEventListener("drop", function (e) {
+  window.addEventListener("drop", async function (e) {
     e.preventDefault(); dragDepth = 0; dropOverlay.classList.remove("show");
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) { loadFile(file); return; }
+
+    const items = e.dataTransfer.items;
+    const plainFiles = e.dataTransfer.files;
+
+    // 1) 先尝试读取文件夹/多文件
+    let collectedImages = [];
+    let mdFiles = [];
+
+    if (items && items.length) {
+      const entries = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+        if (entry) entries.push(entry);
+      }
+      if (entries.length) {
+        for (const entry of entries) {
+          if (entry.isDirectory) {
+            await collectDir(entry, mdFiles, collectedImages);
+          } else if (entry.isFile) {
+            await new Promise(function (resolve) {
+              entry.file(function (f) {
+                if (/\.(md|markdown|txt)$/i.test(f.name)) mdFiles.push(f);
+                else if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name)) collectedImages.push(f);
+                resolve();
+              }, resolve);
+            });
+          }
+        }
+      }
+    }
+
+    // 兜底：普通多文件
+    if (!mdFiles.length && !collectedImages.length && plainFiles && plainFiles.length) {
+      for (let i = 0; i < plainFiles.length; i++) {
+        const f = plainFiles[i];
+        if (/\.(md|markdown|txt)$/i.test(f.name)) mdFiles.push(f);
+        else if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name)) collectedImages.push(f);
+      }
+    }
+
+    // 2) 注册图片
+    collectedImages.forEach(registerImageFile);
+
+    // 3) 加载 Markdown 文件（多个则依次新增页面）
+    if (mdFiles.length) {
+      mdFiles.forEach(function (f, idx) {
+        const reader = new FileReader();
+        reader.onload = function (ev) {
+          loadContentInto(String(ev.target.result), f.name);
+          if (idx === mdFiles.length - 1) meta.textContent = "已加载 " + mdFiles.length + " 个文件，图片 " + collectedImages.length + " 张";
+        };
+        reader.readAsText(f);
+      });
+      return;
+    }
+
+    // 4) 如果只拖了图片，当前页存在时把这些图片列出来
+    if (collectedImages.length) {
+      meta.textContent = "已识别图片 " + collectedImages.length + " 张";
+      renderPreview();
+      return;
+    }
+
+    // 5) 纯文本拖放
     const text = e.dataTransfer.getData("text/plain");
     if (text) { const p = activePage(); if (p) p.content = text; editor.value = text; renderPreview(); renderTabs(); persist(); }
   });
+
+  function collectDir(dirEntry, mdOut, imgOut) {
+    return new Promise(function (resolve) {
+      const reader = dirEntry.createReader();
+      reader.readEntries(async function (entries) {
+        for (const entry of entries) {
+          if (entry.isDirectory) await collectDir(entry, mdOut, imgOut);
+          else if (entry.isFile) {
+            await new Promise(function (r) {
+              entry.file(function (f) {
+                if (/\.(md|markdown|txt)$/i.test(f.name)) mdOut.push(f);
+                else if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name)) imgOut.push(f);
+                r();
+              }, r);
+            });
+          }
+        }
+        resolve();
+      }, resolve);
+    });
+  }
 
   // ---------- 全局粘贴：空内容时自动填充当前页 ----------
   document.addEventListener("paste", function (e) {
@@ -520,9 +763,11 @@
     navigator.clipboard.writeText(text).then(function () { meta.textContent = "已复制当前页面 Markdown 源码"; })
       .catch(function () { meta.textContent = "复制失败"; });
   });
-  document.getElementById("btn-export").addEventListener("click", function () {
+  document.getElementById("btn-export").addEventListener("click", async function () {
     if (!editor.value.trim()) { meta.textContent = "当前页面没有可导出的内容"; return; }
-    var clean = DOMPurify.sanitize(marked.parse(editor.value));
+    meta.textContent = "正在内嵌本地图片…";
+    var inlinedMd = await inlineLocalImages(editor.value);
+    var clean = DOMPurify.sanitize(marked.parse(inlinedMd));
     var docTitle = activePage() ? displayTitle(activePage(), pages.indexOf(activePage())) : "document";
     var safeTitle = escapeHtml(docTitle);
 
@@ -633,7 +878,10 @@
         else if (tag === "em" || tag === "i") out += "*" + txt + "*";
         else if (tag === "code") out += "`" + n.textContent + "`";
         else if (tag === "a") out += "[" + txt + "](" + (n.getAttribute("href") || "") + ")";
-        else if (tag === "img") out += "![" + (n.getAttribute("alt") || "") + "](" + (n.getAttribute("src") || "") + ")";
+        else if (tag === "img") {
+          const src = n.getAttribute("data-original-src") || n.getAttribute("src") || "";
+          out += "![" + (n.getAttribute("alt") || "") + "](" + src + ")";
+        }
         else if (tag === "br") out += "\n";
         else out += txt;
       });
