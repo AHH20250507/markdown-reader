@@ -271,6 +271,7 @@
     <button class="btn" id="btn-open">打开文件</button>
     <button class="btn primary" id="btn-add">＋ 新增页面</button>
     <button class="btn danger" id="btn-clear">清空</button>
+    <button class="btn danger" id="btn-delete-all">🗑 删除全部页面</button>
     <button class="btn" id="btn-toggle-editor">隐藏编辑</button>
     <button class="btn" id="btn-theme">🌗 主题</button>
     <button class="btn" id="btn-search">🔍 搜索</button>
@@ -834,6 +835,17 @@
     const p = activePage(); if (!p) return;
     p.content = ""; editor.value = ""; renderPreview(); renderTabs(); persist();
     meta.textContent = "已清空当前页面";
+  });
+  document.getElementById("btn-delete-all").addEventListener("click", function () {
+    if (!pages.length) { meta.textContent = "没有可删除的页面"; return; }
+    const n = pages.length;
+    if (!confirm("确定要删除全部 " + n + " 个页面吗？\n此操作不可恢复！")) return;
+    flushPreviewEdit();
+    pages = [];
+    const np = newPage();
+    pages.push(np); activeId = np.id;
+    editor.value = ""; renderPreview(); renderTabs(); persist();
+    meta.textContent = "已删除全部 " + n + " 个页面";
   });
   document.getElementById("btn-toggle-editor").addEventListener("click", function () {
     const hidden = paneEditor.classList.toggle("hidden");
